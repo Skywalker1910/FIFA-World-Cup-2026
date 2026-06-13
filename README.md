@@ -60,6 +60,7 @@ SQLITE_DB_PATH=/data/tracker.db
 API_FOOTBALL_KEY=your-api-football-key
 API_FOOTBALL_LEAGUE=1
 API_FOOTBALL_SEASON=2026
+API_FOOTBALL_SYNC_MINUTES=15
 ```
 
 6. Deploy. Railway will provide a public URL. Add `www.uvxupworldcupbets.com` as a custom domain in Railway, then point your DNS CNAME to Railway's target.
@@ -100,11 +101,20 @@ The `/admin` page has a `Sync API-Football Results` button. The default league I
 
 The sync updates live/current scores, stores API match status, and only sets the final betting result when API-Football reports a final status such as `FT`, `AET`, or `PEN`.
 
+When `API_FOOTBALL_KEY` is set, the server automatically syncs scores every `API_FOOTBALL_SYNC_MINUTES` minutes. The public dashboard refreshes once per minute.
+
+Check sync status at:
+
+```text
+/api/sync-status
+```
+
 Optional overrides:
 
 ```powershell
 $env:API_FOOTBALL_BASE_URL="https://v3.football.api-sports.io"
 $env:SPORTS_API_URL="custom-fixtures-url"
+$env:API_FOOTBALL_AUTO_SYNC="false"
 ```
 
 ## Team Flags

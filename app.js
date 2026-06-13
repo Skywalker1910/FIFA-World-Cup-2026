@@ -14,6 +14,7 @@ const TEAM_FLAGS = {
 };
 
 let app = { user: null, state: null };
+const refreshIntervalMs = 60 * 1000;
 
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
@@ -307,7 +308,14 @@ async function refresh() {
   const [me, state] = await Promise.all([api("/api/me"), api("/api/state")]);
   app.user = me.user;
   app.state = state;
-  elements.saveStatus.textContent = "Database connected";
+  const sync = state.sync;
+  elements.saveStatus.textContent = sync?.enabled
+    ? sync.running
+      ? "Syncing scores..."
+      : sync.lastSuccessAt
+        ? `Scores synced ${new Date(sync.lastSuccessAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+        : "Score sync enabled"
+    : "Database connected";
   renderAll();
 }
 
@@ -356,3 +364,7 @@ refresh().catch((error) => {
   elements.saveStatus.textContent = error.message;
   console.error(error);
 });
+
+setInterval(() => {
+  refresh().catch((error) => console.error(error));
+}, refreshIntervalMs);

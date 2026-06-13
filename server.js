@@ -11,6 +11,20 @@ const sqliteCommand = process.env.SQLITE3_PATH || "sqlite3";
 const sessionCookie = "wc_session";
 const publicPaths = new Set(["/", "/index.html", "/styles.css", "/app.js", "/admin.js", "/data/fixtures.js"]);
 const finalApiFootballStatuses = new Set(["FT", "AET", "PEN"]);
+const apiFootballSyncMinutes = Math.max(1, Number(process.env.API_FOOTBALL_SYNC_MINUTES || 15));
+const autoSyncEnabled = process.env.API_FOOTBALL_AUTO_SYNC !== "false";
+let syncInProgress = false;
+let lastSyncStatus = {
+  enabled: false,
+  running: false,
+  lastRunAt: null,
+  lastSuccessAt: null,
+  lastErrorAt: null,
+  updated: 0,
+  unmatched: 0,
+  message: "API-Football sync has not run yet.",
+  error: null,
+};
 const initialPlayers = [
   { displayName: "Skywalker", loginId: "AdityaMore", password: "Player@1", sourceInitial: "A" },
   { displayName: "Mith", loginId: "MithileshBiradar", password: "Player@2", sourceInitial: "M" },
@@ -374,7 +388,7 @@ async function appState(user = null) {
   });
   summaries.sort((a, b) => b.net - a.net || b.correct - a.correct || a.display_name.localeCompare(b.display_name));
 
-  return { settings: { stake, lockMinutes: Number(settings.lock_minutes || 60) }, fixtures, users, players, leaderboard: summaries };
+  return { settings: { stake, lockMinutes: Number(settings.lock_minutes || 60) }, fixtures, users, players, leaderboard: summaries, sync: lastSyncStatus };
 }
 
 async function syncSportsResults() {
@@ -388,11 +402,22 @@ async function syncSportsResults() {
   const apiKey = apiFootballKey || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_API_KEY;
 
   if (!apiUrl) {
-    return {
+    const result = {
       updated: 0,
       unmatched: 0,
       message: "Set API_FOOTBALL_KEY to enable API-Football sync. Optional: API_FOOTBALL_LEAGUE=1 and API_FOOTBALL_SEASON=2026.",
     };
+    lastSyncStatus = {
+      ...lastSyncStatus,
+      enabled: false,
+      running: false,
+      lastRunAt: new Date().toISOString(),
+      updated: 0,
+      unmatched: 0,
+      message: result.message,
+      error: null,
+    };
+    return result;
   }
 
   const headers = {};
@@ -449,11 +474,80 @@ async function syncSportsResults() {
     `);
     updated += 1;
   }
-  return {
+  const result = {
     updated,
     unmatched,
     message: `API-Football sync updated ${updated} matches${unmatched ? `; ${unmatched} API matches were not in the tracker` : ""}.`,
   };
+  lastSyncStatus = {
+    ...lastSyncStatus,
+    enabled: true,
+    running: false,
+    lastRunAt: new Date().toISOString(),
+    lastSuccessAt: new Date().toISOString(),
+    updated,
+    unmatched,
+    message: result.message,
+    error: null,
+  };
+  return result;
+}
+
+async function runScheduledSync(reason = "scheduled") {
+  if (!autoSyncEnabled || !process.env.API_FOOTBALL_KEY) {
+    lastSyncStatus = {
+      ...lastSyncStatus,
+      enabled: Boolean(process.env.API_FOOTBALL_KEY),
+      running: false,
+      message: process.env.API_FOOTBALL_KEY
+        ? "Automatic API-Football sync is disabled."
+        : "Automatic API-Football sync is waiting for API_FOOTBALL_KEY.",
+    };
+    return lastSyncStatus;
+  }
+  if (syncInProgress) return lastSyncStatus;
+
+  syncInProgress = true;
+  lastSyncStatus = {
+    ...lastSyncStatus,
+    enabled: true,
+    running: true,
+    lastRunAt: new Date().toISOString(),
+    message: `API-Football ${reason} sync running.`,
+    error: null,
+  };
+  try {
+    const result = await syncSportsResults();
+    return { ...lastSyncStatus, ...result };
+  } catch (error) {
+    lastSyncStatus = {
+      ...lastSyncStatus,
+      enabled: true,
+      running: false,
+      lastErrorAt: new Date().toISOString(),
+      message: "API-Football sync failed.",
+      error: error.message,
+    };
+    console.error("API-Football sync failed:", error);
+    return lastSyncStatus;
+  } finally {
+    syncInProgress = false;
+    lastSyncStatus = { ...lastSyncStatus, running: false };
+  }
+}
+
+function startApiFootballAutoSync() {
+  lastSyncStatus = {
+    ...lastSyncStatus,
+    enabled: Boolean(process.env.API_FOOTBALL_KEY) && autoSyncEnabled,
+    message: process.env.API_FOOTBALL_KEY
+      ? `API-Football auto sync every ${apiFootballSyncMinutes} minutes.`
+      : "Automatic API-Football sync is waiting for API_FOOTBALL_KEY.",
+  };
+  if (!process.env.API_FOOTBALL_KEY || !autoSyncEnabled) return;
+
+  setTimeout(() => runScheduledSync("startup"), 5000);
+  setInterval(() => runScheduledSync("scheduled"), apiFootballSyncMinutes * 60 * 1000);
 }
 
 function serveStatic(request, response) {
@@ -510,6 +604,11 @@ async function router(request, response) {
 
   if (request.method === "GET" && url.pathname === "/api/state") {
     sendJson(response, 200, await appState(await currentUser(request)));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/sync-status") {
+    sendJson(response, 200, lastSyncStatus);
     return;
   }
 
@@ -617,7 +716,7 @@ async function router(request, response) {
   if (request.method === "POST" && url.pathname === "/api/admin/sync-results") {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
-    sendJson(response, 200, { ok: true, ...(await syncSportsResults()), state: await appState(admin) });
+    sendJson(response, 200, { ok: true, ...(await runScheduledSync("manual")), state: await appState(admin) });
     return;
   }
 
@@ -634,6 +733,7 @@ initDb().then(() => {
   }).listen(port, () => {
     console.log(`World Cup bet tracker running at http://localhost:${port}`);
     console.log("Default admin: admin / admin123");
+    startApiFootballAutoSync();
   });
 }).catch((error) => {
   console.error(error);
