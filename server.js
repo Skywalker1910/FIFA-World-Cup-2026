@@ -22,6 +22,9 @@ let lastSyncStatus = {
   lastErrorAt: null,
   updated: 0,
   unmatched: 0,
+  sourceMatches: 0,
+  skippedWithoutScore: 0,
+  unmatchedSamples: [],
   message: "API-Football sync has not run yet.",
   error: null,
 };
@@ -438,6 +441,8 @@ async function syncSportsResults() {
   ]));
   let updated = 0;
   let unmatched = 0;
+  let skippedWithoutScore = 0;
+  const unmatchedSamples = [];
 
   for (const item of sourceMatches) {
     const home = item.homeTeam?.name || item.teams?.home?.name || item.strHomeTeam;
@@ -445,13 +450,17 @@ async function syncSportsResults() {
     const homeScore = item.score?.fullTime?.home ?? item.goals?.home ?? item.intHomeScore;
     const awayScore = item.score?.fullTime?.away ?? item.goals?.away ?? item.intAwayScore;
     const status = item.status || item.fixture?.status?.short || item.fixture?.status?.long || "";
-    if (!home || !away || homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) continue;
+    if (!home || !away || homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) {
+      skippedWithoutScore += 1;
+      continue;
+    }
 
     const normalHome = normalizeTeamName(home);
     const normalAway = normalizeTeamName(away);
     const localMatch = localByTeams.get(`${normalHome}|${normalAway}`) || localByTeams.get(`${normalAway}|${normalHome}`);
     if (!localMatch) {
       unmatched += 1;
+      if (unmatchedSamples.length < 5) unmatchedSamples.push(`${home} vs ${away}`);
       continue;
     }
 
@@ -477,7 +486,10 @@ async function syncSportsResults() {
   const result = {
     updated,
     unmatched,
-    message: `API-Football sync updated ${updated} matches${unmatched ? `; ${unmatched} API matches were not in the tracker` : ""}.`,
+    sourceMatches: sourceMatches.length,
+    skippedWithoutScore,
+    unmatchedSamples,
+    message: `API-Football sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}.`,
   };
   lastSyncStatus = {
     ...lastSyncStatus,
@@ -487,6 +499,9 @@ async function syncSportsResults() {
     lastSuccessAt: new Date().toISOString(),
     updated,
     unmatched,
+    sourceMatches: sourceMatches.length,
+    skippedWithoutScore,
+    unmatchedSamples,
     message: result.message,
     error: null,
   };

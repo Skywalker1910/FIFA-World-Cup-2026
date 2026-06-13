@@ -114,6 +114,17 @@ function settlement(fixture) {
   };
 }
 
+function hasScore(fixture) {
+  return fixture.team1Score !== null
+    && fixture.team1Score !== undefined
+    && fixture.team2Score !== null
+    && fixture.team2Score !== undefined;
+}
+
+function scoreText(fixture) {
+  return hasScore(fixture) ? `${fixture.team1Score} - ${fixture.team2Score}` : "-";
+}
+
 function optionList(selected, labels = PICK_OPTIONS) {
   return labels.map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${value || "-"}</option>`).join("");
 }
@@ -156,18 +167,18 @@ function renderLeaderboard() {
 }
 
 function renderRecentSettlements() {
-  const settled = app.state.fixtures.filter((fixture) => fixture.result).slice(-6).reverse();
-  elements.settlementCount.textContent = `${settled.length} shown`;
-  elements.recentSettlements.innerHTML = settled.length ? settled.map((fixture) => `
+  const scored = app.state.fixtures.filter((fixture) => fixture.result || hasScore(fixture)).slice(-6).reverse();
+  elements.settlementCount.textContent = `${scored.length} shown`;
+  elements.recentSettlements.innerHTML = scored.length ? scored.map((fixture) => `
     <div class="compact-item">
       <div>
         <strong>#${fixture.id}</strong>
         <div class="mini-teams">${teamBadge(fixture.team1, { compact: true })}${teamBadge(fixture.team2, { compact: true })}</div>
-        <small>${resultLabel(fixture, fixture.result)} won</small>
+        <small>${fixture.result ? `${resultLabel(fixture, fixture.result)} won` : escapeHtml(fixture.status || "Score updated")}</small>
       </div>
-      <strong>${money(settlement(fixture).pool)}</strong>
+      <strong>${scoreText(fixture)}</strong>
     </div>
-  `).join("") : `<div class="empty-state">No settled matches yet.</div>`;
+  `).join("") : `<div class="empty-state">No scored matches yet.</div>`;
 }
 
 function renderMatchBoard() {
@@ -178,7 +189,7 @@ function renderMatchBoard() {
     <article class="match-card">
       <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
       <div class="match-card-teams">${teamBadge(fixture.team1)}<span class="versus">vs</span>${teamBadge(fixture.team2)}</div>
-      <div class="match-card-footer"><span>${fixture.locked ? "Locked" : fixture.kickoff || "TBD"}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : money(settlement(fixture).pool)}</strong></div>
+      <div class="match-card-footer"><span>${fixture.locked ? "Locked" : fixture.kickoff || "TBD"}</span><strong>${hasScore(fixture) ? scoreText(fixture) : fixture.result ? resultLabel(fixture, fixture.result) : money(settlement(fixture).pool)}</strong></div>
     </article>
   `).join("");
 }
@@ -193,20 +204,20 @@ function renderLiveScores() {
   const matches = app.state.fixtures
     .filter((fixture) => {
       const start = matchStartTime(fixture);
-      return Number.isFinite(start) && start <= now && now <= start + liveWindow;
+      return hasScore(fixture) && Number.isFinite(start) && start <= now && now <= start + liveWindow;
     })
     .slice(0, 6);
-  const fallback = app.state.fixtures.filter((fixture) => fixture.result).slice(-6).reverse();
+  const fallback = app.state.fixtures.filter((fixture) => fixture.result || hasScore(fixture)).slice(-6).reverse();
   const rows = matches.length ? matches : fallback;
-  elements.liveScoresLabel.textContent = matches.length ? "Ongoing now" : "Latest results";
+  elements.liveScoresLabel.textContent = matches.length ? "Ongoing now" : "Latest scores";
   elements.liveScores.innerHTML = rows.length ? rows.map((fixture) => `
     <article class="live-score-card">
       <div class="match-card-meta"><span>#${fixture.id}</span><span>${escapeHtml(fixture.status || (matches.length ? "Live" : "Final"))}</span></div>
       <div class="score-line">${teamBadge(fixture.team1)}<strong>${fixture.team1Score ?? "-"}</strong></div>
       <div class="score-line">${teamBadge(fixture.team2)}<strong>${fixture.team2Score ?? "-"}</strong></div>
-      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : "Open"}</strong></div>
+      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(fixture.status || "In progress")}</strong></div>
     </article>
-  `).join("") : `<div class="empty-state">No live or completed matches yet.</div>`;
+  `).join("") : `<div class="empty-state">No synced scores yet.</div>`;
 }
 
 function renderUpcomingMatches() {
@@ -310,10 +321,12 @@ async function refresh() {
   app.state = state;
   const sync = state.sync;
   elements.saveStatus.textContent = sync?.enabled
-    ? sync.running
+    ? sync.error
+      ? `Sync error: ${sync.error}`
+      : sync.running
       ? "Syncing scores..."
       : sync.lastSuccessAt
-        ? `Scores synced ${new Date(sync.lastSuccessAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+        ? `Scores synced ${new Date(sync.lastSuccessAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} (${sync.updated || 0} updated)`
         : "Score sync enabled"
     : "Database connected";
   renderAll();
