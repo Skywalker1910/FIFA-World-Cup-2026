@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin - World Cup 2026 Bet Tracker</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell admin-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">26</span>
+          <div>
+            <h1>Admin Console</h1>
+            <p>Users, results, settings</p>
+          </div>
+        </div>
+        <nav class="nav-tabs" aria-label="Admin navigation">
+          <a class="nav-tab active" href="/admin">Admin</a>
+          <a class="nav-tab" href="/">Public App</a>
+        </nav>
+        <section class="settings-panel">
+          <h2>Account</h2>
+          <p id="accountLabel">Not signed in</p>
+          <div class="button-stack">
+            <button id="logoutButton" class="secondary-button" type="button">Logout</button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section class="topbar">
+          <div>
+            <p class="eyebrow">Private Admin</p>
+            <h2>Admin Panel</h2>
+          </div>
+          <div class="status-pill" id="saveStatus">Connecting</div>
+        </section>
+
+        <section class="login-panel panel" id="loginPanel">
+          <div class="panel-heading">
+            <h3>Admin Login</h3>
+            <span>Restricted area</span>
+          </div>
+          <form id="loginForm" class="form-grid">
+            <input name="loginId" placeholder="Login ID" autocomplete="username" required>
+            <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
+            <button class="primary-button" type="submit">Sign in</button>
+          </form>
+        </section>
+
+        <section class="admin-grid" id="adminContent">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Create User</h3>
+              <span>Share credentials manually</span>
+            </div>
+            <form id="createUserForm" class="form-grid">
+              <input name="displayName" placeholder="Display name" required>
+              <input name="loginId" placeholder="Login ID" required>
+              <input name="password" placeholder="Temporary password" required>
+              <select name="role">
+                <option value="player">Player</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button class="primary-button" type="submit">Create user</button>
+            </form>
+            <div class="compact-list" id="adminUsers"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Settings</h3>
+              <span>Applies immediately</span>
+            </div>
+            <form id="settingsForm" class="form-grid">
+              <input name="stake" type="number" min="0" step="0.25" placeholder="Stake">
+              <input name="lockMinutes" type="number" min="0" step="1" placeholder="Lock minutes">
+              <button class="primary-button" type="submit">Save settings</button>
+            </form>
+            <button id="syncResultsButton" class="secondary-light-button" type="button">Sync API-Football Results</button>
+            <div class="compact-list" id="adminMatches"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/admin.js"></script>
+  </body>
+</html>

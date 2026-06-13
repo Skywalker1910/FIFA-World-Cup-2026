@@ -1,0 +1,641 @@
+const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const { execFile } = require("node:child_process");
+
+const rootDir = __dirname;
+const port = Number(process.env.PORT || 3000);
+const dbPath = process.env.SQLITE_DB_PATH || path.join(rootDir, "data", "tracker.db");
+const sqliteCommand = process.env.SQLITE3_PATH || "sqlite3";
+const sessionCookie = "wc_session";
+const publicPaths = new Set(["/", "/index.html", "/styles.css", "/app.js", "/admin.js", "/data/fixtures.js"]);
+const finalApiFootballStatuses = new Set(["FT", "AET", "PEN"]);
+const initialPlayers = [
+  { displayName: "Skywalker", loginId: "AdityaMore", password: "Player@1", sourceInitial: "A" },
+  { displayName: "Mith", loginId: "MithileshBiradar", password: "Player@2", sourceInitial: "M" },
+  { displayName: "TBD", loginId: "ShardulVartak", password: "Player@3", sourceInitial: "S" },
+];
+
+const contentTypes = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+};
+
+function sqlValue(value) {
+  if (value === null || value === undefined || value === "") return "NULL";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function runSql(sql, json = false) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const tempSqlPath = !json && sql.length > 7000
+      ? path.join(path.dirname(dbPath), `query-${crypto.randomBytes(8).toString("hex")}.sql`)
+      : null;
+    if (tempSqlPath) fs.writeFileSync(tempSqlPath, sql);
+    const args = json
+      ? ["-json", dbPath, sql]
+      : tempSqlPath
+        ? [dbPath, `.read "${tempSqlPath.replaceAll("\\", "/")}"`]
+        : [dbPath, sql];
+    execFile(sqliteCommand, args, { cwd: rootDir, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (tempSqlPath) fs.rmSync(tempSqlPath, { force: true });
+      if (error) {
+        reject(new Error(stderr || error.message));
+        return;
+      }
+      if (!json) {
+        resolve(stdout.trim());
+        return;
+      }
+      resolve(stdout.trim() ? JSON.parse(stdout) : []);
+    });
+  });
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.pbkdf2Sync(password, salt, 120000, 32, "sha256").toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  const [salt, expected] = String(storedHash || "").split(":");
+  if (!salt || !expected) return false;
+  const actual = hashPassword(password, salt).split(":")[1];
+  return crypto.timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"));
+}
+
+function parseCookies(request) {
+  return Object.fromEntries((request.headers.cookie || "").split(";").filter(Boolean).map((cookie) => {
+    const [key, ...rest] = cookie.trim().split("=");
+    return [key, decodeURIComponent(rest.join("="))];
+  }));
+}
+
+function sendJson(response, status, payload, headers = {}) {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers });
+  response.end(JSON.stringify(payload));
+}
+
+function readBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 10_000_000) {
+        reject(new Error("Request body is too large"));
+        request.destroy();
+      }
+    });
+    request.on("end", () => resolve(body ? JSON.parse(body) : {}));
+    request.on("error", reject);
+  });
+}
+
+function fixtureRows() {
+  const fixturesPath = path.join(rootDir, "data", "fixtures.js");
+  global.window = {};
+  delete require.cache[require.resolve(fixturesPath)];
+  require(fixturesPath);
+  return global.window.WC_BET_TRACKER_FIXTURES || [];
+}
+
+function parseKickoffUtc(date, kickoff) {
+  if (!date || !kickoff) return null;
+  const match = String(kickoff).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const meridian = match[3].toUpperCase();
+  if (meridian === "PM" && hour !== 12) hour += 12;
+  if (meridian === "AM" && hour === 12) hour = 0;
+  return new Date(`${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00-04:00`).toISOString();
+}
+
+function normalizeTeamName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(united states|usa|u\.s\.a\.)\b/gi, "us")
+    .replace(/\b(turkiye|turkey)\b/gi, "turkiye")
+    .replace(/\b(south korea|korea republic|korea)\b/gi, "korea republic")
+    .replace(/\b(cape verde|cabo verde)\b/gi, "cabo verde")
+    .replace(/\b(iran|ir iran)\b/gi, "ir iran")
+    .replace(/\b(dr congo|congo dr|democratic republic of congo)\b/gi, "congo dr")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isLocked(match) {
+  if (!match.kickoff_at) return false;
+  return Date.now() >= new Date(match.kickoff_at).getTime() - 60 * 60 * 1000;
+}
+
+async function initDb() {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  await runSql(`
+    PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login_id TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('admin','player')),
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS matches (
+      id INTEGER PRIMARY KEY,
+      stage TEXT,
+      group_name TEXT,
+      match_date TEXT,
+      kickoff TEXT,
+      kickoff_at TEXT,
+      venue TEXT,
+      team1 TEXT,
+      team2 TEXT,
+      team1_score INTEGER,
+      team2_score INTEGER,
+      result TEXT,
+      match_status TEXT,
+      notes TEXT,
+      source_url TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS bets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      match_id INTEGER NOT NULL,
+      pick TEXT NOT NULL CHECK(pick IN ('Team 1','Team 2','Draw')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, match_id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(match_id) REFERENCES matches(id)
+    );
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      action TEXT NOT NULL,
+      details TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT OR IGNORE INTO settings(key, value) VALUES ('stake', '1'), ('lock_minutes', '60');
+  `);
+
+  try {
+    await runSql("ALTER TABLE matches ADD COLUMN match_status TEXT;");
+  } catch (error) {
+    if (!String(error.message).includes("duplicate column name")) throw error;
+  }
+
+  const adminCount = await runSql("SELECT COUNT(*) AS count FROM users WHERE role = 'admin';", true);
+  if (!adminCount[0].count) {
+    await runSql(`
+      INSERT INTO users(login_id, display_name, password_hash, role)
+      VALUES ('admin', 'Admin', ${sqlValue(hashPassword("admin123"))}, 'admin');
+    `);
+  }
+
+  const matchCount = await runSql("SELECT COUNT(*) AS count FROM matches;", true);
+  if (!matchCount[0].count) {
+    const fixtures = fixtureRows();
+    const inserts = fixtures.map((fixture) => `
+      INSERT INTO matches(id, stage, group_name, match_date, kickoff, kickoff_at, venue, team1, team2, team1_score, team2_score, result, notes, source_url)
+      VALUES (
+        ${sqlValue(fixture.id)}, ${sqlValue(fixture.stage)}, ${sqlValue(fixture.group)}, ${sqlValue(fixture.date)},
+        ${sqlValue(fixture.kickoff)}, ${sqlValue(parseKickoffUtc(fixture.date, fixture.kickoff))}, ${sqlValue(fixture.venue)},
+        ${sqlValue(fixture.team1)}, ${sqlValue(fixture.team2)}, ${sqlValue(fixture.team1Score)}, ${sqlValue(fixture.team2Score)},
+        ${sqlValue(fixture.result)}, ${sqlValue(fixture.notes)}, ${sqlValue(fixture.sourceUrl)}
+      );
+    `).join("\n");
+    await runSql(inserts);
+  }
+
+  await seedInitialPlayers();
+}
+
+async function seedInitialPlayers() {
+  const fixtures = fixtureRows();
+  const userSql = initialPlayers.map((player) => `
+    INSERT INTO users(login_id, display_name, password_hash, role, is_active)
+    VALUES (${sqlValue(player.loginId)}, ${sqlValue(player.displayName)}, ${sqlValue(hashPassword(player.password))}, 'player', 1)
+    ON CONFLICT(login_id) DO NOTHING;
+  `).join("\n");
+  await runSql(userSql);
+
+  const existingBets = await runSql("SELECT COUNT(*) AS count FROM bets;", true);
+  if (existingBets[0].count) return;
+
+  const playerRows = await runSql(`
+    SELECT id, login_id
+    FROM users
+    WHERE login_id IN (${initialPlayers.map((player) => sqlValue(player.loginId)).join(", ")});
+  `, true);
+  const playerIdByLogin = new Map(playerRows.map((row) => [row.login_id, row.id]));
+  const betSql = initialPlayers.flatMap((player) => {
+    const userId = playerIdByLogin.get(player.loginId);
+    if (!userId) return [];
+    return fixtures
+      .filter((fixture) => fixture.picks?.[player.sourceInitial])
+      .map((fixture) => `
+        INSERT INTO bets(user_id, match_id, pick, updated_at)
+        VALUES (${userId}, ${fixture.id}, ${sqlValue(fixture.picks[player.sourceInitial])}, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, match_id) DO UPDATE SET
+          pick = excluded.pick,
+          updated_at = CURRENT_TIMESTAMP;
+      `);
+  }).join("\n");
+  if (betSql) await runSql(betSql);
+}
+
+async function currentUser(request) {
+  const token = parseCookies(request)[sessionCookie];
+  if (!token) return null;
+  const rows = await runSql(`
+    SELECT users.id, users.login_id, users.display_name, users.role
+    FROM sessions
+    JOIN users ON users.id = sessions.user_id
+    WHERE sessions.token = ${sqlValue(token)}
+      AND sessions.expires_at > datetime('now')
+      AND users.is_active = 1;
+  `, true);
+  return rows[0] || null;
+}
+
+async function requireUser(request, response) {
+  const user = await currentUser(request);
+  if (!user) {
+    sendJson(response, 401, { ok: false, error: "Login required" });
+    return null;
+  }
+  return user;
+}
+
+async function requireAdmin(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) return null;
+  if (user.role !== "admin") {
+    sendJson(response, 403, { ok: false, error: "Admin access required" });
+    return null;
+  }
+  return user;
+}
+
+function settlement(match, bets, users, stake) {
+  const correct = match.result ? bets.filter((bet) => bet.pick === match.result) : [];
+  const pool = bets.length * stake;
+  const payoutEach = match.result && correct.length ? pool / correct.length : 0;
+  return users.map((user) => {
+    const bet = bets.find((row) => row.user_id === user.id);
+    const won = Boolean(match.result && bet && bet.pick === match.result);
+    const payout = won ? payoutEach : 0;
+    const net = match.result && bet ? payout - stake : 0;
+    return { user_id: user.id, payout, net, correct: won ? 1 : 0, settled: match.result && bet ? 1 : 0 };
+  });
+}
+
+async function appState(user = null) {
+  const [settingsRows, matches, users, bets] = await Promise.all([
+    runSql("SELECT key, value FROM settings;", true),
+    runSql("SELECT * FROM matches ORDER BY id;", true),
+    runSql("SELECT id, login_id, display_name, role, is_active, created_at FROM users ORDER BY role, display_name;", true),
+    runSql("SELECT * FROM bets ORDER BY match_id, user_id;", true),
+  ]);
+  const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
+  const stake = Number(settings.stake || 1);
+  const players = users.filter((row) => row.role === "player" && row.is_active);
+  const summaries = players.map((player) => ({
+    user_id: player.id,
+    login_id: player.login_id,
+    display_name: player.display_name,
+    bets_entered: 0,
+    settled: 0,
+    correct: 0,
+    payout: 0,
+    net: 0,
+    roi: 0,
+  }));
+
+  const fixtures = matches.map((match) => {
+    const matchBets = bets.filter((bet) => bet.match_id === match.id);
+    const rows = settlement(match, matchBets, players, stake);
+    rows.forEach((row) => {
+      const summary = summaries.find((item) => item.user_id === row.user_id);
+      const bet = matchBets.find((item) => item.user_id === row.user_id);
+      if (bet) summary.bets_entered += 1;
+      summary.settled += row.settled;
+      summary.correct += row.correct;
+      summary.payout += row.payout;
+      summary.net += row.net;
+    });
+    const publicBets = Object.fromEntries(matchBets.map((bet) => [bet.user_id, bet.pick]));
+    return {
+      id: match.id,
+      stage: match.stage,
+      group: match.group_name,
+      date: match.match_date,
+      kickoff: match.kickoff,
+      kickoffAt: match.kickoff_at,
+      venue: match.venue,
+      team1: match.team1,
+      team2: match.team2,
+      team1Score: match.team1_score,
+      team2Score: match.team2_score,
+      result: match.result,
+      status: match.match_status,
+      notes: match.notes,
+      sourceUrl: match.source_url,
+      locked: isLocked(match),
+      bets: publicBets,
+      myPick: user ? publicBets[user.id] || "" : "",
+    };
+  });
+
+  summaries.forEach((summary) => {
+    const staked = summary.settled * stake;
+    summary.roi = staked ? summary.net / staked : 0;
+  });
+  summaries.sort((a, b) => b.net - a.net || b.correct - a.correct || a.display_name.localeCompare(b.display_name));
+
+  return { settings: { stake, lockMinutes: Number(settings.lock_minutes || 60) }, fixtures, users, players, leaderboard: summaries };
+}
+
+async function syncSportsResults() {
+  const apiFootballKey = process.env.API_FOOTBALL_KEY;
+  const apiFootballLeague = process.env.API_FOOTBALL_LEAGUE || "1";
+  const apiFootballSeason = process.env.API_FOOTBALL_SEASON || "2026";
+  const apiFootballBaseUrl = process.env.API_FOOTBALL_BASE_URL || "https://v3.football.api-sports.io";
+  const apiUrl = process.env.SPORTS_API_URL || (apiFootballKey
+    ? `${apiFootballBaseUrl}/fixtures?league=${encodeURIComponent(apiFootballLeague)}&season=${encodeURIComponent(apiFootballSeason)}`
+    : "");
+  const apiKey = apiFootballKey || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_API_KEY;
+
+  if (!apiUrl) {
+    return {
+      updated: 0,
+      unmatched: 0,
+      message: "Set API_FOOTBALL_KEY to enable API-Football sync. Optional: API_FOOTBALL_LEAGUE=1 and API_FOOTBALL_SEASON=2026.",
+    };
+  }
+
+  const headers = {};
+  if (apiFootballKey) headers["x-apisports-key"] = apiFootballKey;
+  else if (apiKey) {
+    headers["X-Auth-Token"] = apiKey;
+    headers["x-apisports-key"] = apiKey;
+  }
+
+  const response = await fetch(apiUrl, { headers });
+  if (!response.ok) throw new Error(`Sports API failed: ${response.status}`);
+  const payload = await response.json();
+  const sourceMatches = payload.matches || payload.response || payload.events || [];
+  const localMatches = await runSql("SELECT id, team1, team2 FROM matches;", true);
+  const localByTeams = new Map(localMatches.map((match) => [
+    `${normalizeTeamName(match.team1)}|${normalizeTeamName(match.team2)}`,
+    match,
+  ]));
+  let updated = 0;
+  let unmatched = 0;
+
+  for (const item of sourceMatches) {
+    const home = item.homeTeam?.name || item.teams?.home?.name || item.strHomeTeam;
+    const away = item.awayTeam?.name || item.teams?.away?.name || item.strAwayTeam;
+    const homeScore = item.score?.fullTime?.home ?? item.goals?.home ?? item.intHomeScore;
+    const awayScore = item.score?.fullTime?.away ?? item.goals?.away ?? item.intAwayScore;
+    const status = item.status || item.fixture?.status?.short || item.fixture?.status?.long || "";
+    if (!home || !away || homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) continue;
+
+    const normalHome = normalizeTeamName(home);
+    const normalAway = normalizeTeamName(away);
+    const localMatch = localByTeams.get(`${normalHome}|${normalAway}`) || localByTeams.get(`${normalAway}|${normalHome}`);
+    if (!localMatch) {
+      unmatched += 1;
+      continue;
+    }
+
+    const reversed = normalizeTeamName(localMatch.team1) === normalAway;
+    const team1Score = reversed ? Number(awayScore) : Number(homeScore);
+    const team2Score = reversed ? Number(homeScore) : Number(awayScore);
+    const isFinal = finalApiFootballStatuses.has(String(status).toUpperCase());
+    const result = isFinal
+      ? team1Score > team2Score ? "Team 1" : team2Score > team1Score ? "Team 2" : "Draw"
+      : null;
+
+    await runSql(`
+      UPDATE matches
+      SET team1_score = ${sqlValue(team1Score)},
+          team2_score = ${sqlValue(team2Score)},
+          result = COALESCE(${sqlValue(result)}, result),
+          match_status = ${sqlValue(status)},
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${sqlValue(localMatch.id)};
+    `);
+    updated += 1;
+  }
+  return {
+    updated,
+    unmatched,
+    message: `API-Football sync updated ${updated} matches${unmatched ? `; ${unmatched} API matches were not in the tracker` : ""}.`,
+  };
+}
+
+function serveStatic(request, response) {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const routePath = url.pathname === "/admin" ? "/admin.html" : url.pathname;
+  const requestedPath = decodeURIComponent(routePath === "/" ? "/index.html" : routePath);
+  const filePath = path.normalize(path.join(rootDir, requestedPath));
+  if (!filePath.startsWith(rootDir)) {
+    response.writeHead(403);
+    response.end("Forbidden");
+    return;
+  }
+  fs.readFile(filePath, (error, content) => {
+    if (error) {
+      response.writeHead(404);
+      response.end("Not found");
+      return;
+    }
+    response.writeHead(200, { "content-type": contentTypes[path.extname(filePath)] || "application/octet-stream" });
+    response.end(content);
+  });
+}
+
+async function router(request, response) {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+
+  if (request.method === "POST" && url.pathname === "/api/login") {
+    const body = await readBody(request);
+    const users = await runSql(`SELECT * FROM users WHERE login_id = ${sqlValue(body.loginId)} AND is_active = 1;`, true);
+    const user = users[0];
+    if (!user || !verifyPassword(body.password, user.password_hash)) {
+      sendJson(response, 401, { ok: false, error: "Invalid login ID or password" });
+      return;
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    await runSql(`INSERT INTO sessions(token, user_id, expires_at) VALUES (${sqlValue(token)}, ${user.id}, datetime('now', '+7 days'));`);
+    sendJson(response, 200, { ok: true, user: { id: user.id, login_id: user.login_id, display_name: user.display_name, role: user.role } }, {
+      "set-cookie": `${sessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}`,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/logout") {
+    const token = parseCookies(request)[sessionCookie];
+    if (token) await runSql(`DELETE FROM sessions WHERE token = ${sqlValue(token)};`);
+    sendJson(response, 200, { ok: true }, { "set-cookie": `${sessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/me") {
+    sendJson(response, 200, { user: await currentUser(request) });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/state") {
+    sendJson(response, 200, await appState(await currentUser(request)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/bets") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    if (user.role !== "player") {
+      sendJson(response, 403, { ok: false, error: "Only player accounts can place bets" });
+      return;
+    }
+    const body = await readBody(request);
+    if (!["Team 1", "Team 2", "Draw"].includes(body.pick)) {
+      sendJson(response, 400, { ok: false, error: "Invalid pick" });
+      return;
+    }
+    const matches = await runSql(`SELECT * FROM matches WHERE id = ${sqlValue(Number(body.matchId))};`, true);
+    const match = matches[0];
+    if (!match) {
+      sendJson(response, 404, { ok: false, error: "Match not found" });
+      return;
+    }
+    if (isLocked(match)) {
+      sendJson(response, 423, { ok: false, error: "Betting is locked for this match" });
+      return;
+    }
+    await runSql(`
+      INSERT INTO bets(user_id, match_id, pick, updated_at)
+      VALUES (${user.id}, ${match.id}, ${sqlValue(body.pick)}, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, match_id) DO UPDATE SET pick = excluded.pick, updated_at = CURRENT_TIMESTAMP;
+    `);
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'bet.saved', ${sqlValue(JSON.stringify(body))});`);
+    sendJson(response, 200, { ok: true, state: await appState(user) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/admin/users") {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const body = await readBody(request);
+    if (!body.loginId || !body.password || !body.displayName) {
+      sendJson(response, 400, { ok: false, error: "Login ID, display name, and password are required" });
+      return;
+    }
+    await runSql(`
+      INSERT INTO users(login_id, display_name, password_hash, role, is_active)
+      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(body.role === "admin" ? "admin" : "player")}, 1);
+    `);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/users/")) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const id = Number(url.pathname.split("/").pop());
+    const body = await readBody(request);
+    const passwordSql = body.password ? `, password_hash = ${sqlValue(hashPassword(body.password))}` : "";
+    await runSql(`
+      UPDATE users
+      SET display_name = COALESCE(${sqlValue(body.displayName)}, display_name),
+          is_active = COALESCE(${body.isActive === undefined ? "NULL" : sqlValue(body.isActive ? 1 : 0)}, is_active)
+          ${passwordSql}
+      WHERE id = ${sqlValue(id)};
+    `);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/admin/settings") {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const body = await readBody(request);
+    await runSql(`
+      INSERT INTO settings(key, value) VALUES ('stake', ${sqlValue(String(Number(body.stake || 1)))})
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+      INSERT INTO settings(key, value) VALUES ('lock_minutes', ${sqlValue(String(Number(body.lockMinutes || 60)))})
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    `);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/matches/")) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const id = Number(url.pathname.split("/").pop());
+    const body = await readBody(request);
+    const kickoffAt = parseKickoffUtc(body.date, body.kickoff);
+    await runSql(`
+      UPDATE matches SET
+        match_date = COALESCE(${sqlValue(body.date)}, match_date),
+        kickoff = COALESCE(${sqlValue(body.kickoff)}, kickoff),
+        kickoff_at = COALESCE(${sqlValue(kickoffAt)}, kickoff_at),
+        team1_score = ${sqlValue(body.team1Score)},
+        team2_score = ${sqlValue(body.team2Score)},
+        result = ${sqlValue(body.result)},
+        notes = COALESCE(${sqlValue(body.notes)}, notes),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${sqlValue(id)};
+    `);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/admin/sync-results") {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    sendJson(response, 200, { ok: true, ...(await syncSportsResults()), state: await appState(admin) });
+    return;
+  }
+
+  if (request.method === "GET" && publicPaths.has(url.pathname)) {
+    serveStatic(request, response);
+    return;
+  }
+  serveStatic(request, response);
+}
+
+initDb().then(() => {
+  http.createServer((request, response) => {
+    router(request, response).catch((error) => sendJson(response, 500, { ok: false, error: error.message }));
+  }).listen(port, () => {
+    console.log(`World Cup bet tracker running at http://localhost:${port}`);
+    console.log("Default admin: admin / admin123");
+  });
+}).catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

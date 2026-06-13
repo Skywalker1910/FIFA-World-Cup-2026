@@ -1,0 +1,6 @@
+data/tracker.db
+data/*.db
+data/*.db-*
+server*.log
+*.log
+.git

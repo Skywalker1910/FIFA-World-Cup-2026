@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>World Cup 2026 Bet Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">26</span>
+          <div>
+            <h1>World Cup Bet Tracker</h1>
+            <p>Match pools, picks, payouts</p>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" aria-label="App views">
+          <button class="nav-tab active" data-view="dashboard" type="button">Dashboard</button>
+          <button class="nav-tab" data-view="fixtures" type="button">Bets</button>
+          <button class="nav-tab" data-view="players" type="button">Profiles</button>
+        </nav>
+
+        <section class="settings-panel" aria-labelledby="settings-title">
+          <h2 id="settings-title">Account</h2>
+          <p id="accountLabel">Not signed in</p>
+          <div class="button-stack">
+            <button id="logoutButton" class="secondary-button" type="button">Logout</button>
+            <a class="secondary-button file-button" href="/api/export-workbook">Download Excel</a>
+          </div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section class="topbar">
+          <div>
+            <p class="eyebrow">FIFA World Cup 2026</p>
+            <h2 id="viewTitle">Dashboard</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="loginToggleButton" class="secondary-light-button" type="button">Login</button>
+            <div class="status-pill" id="saveStatus">Connecting</div>
+          </div>
+        </section>
+
+        <section class="view active" id="dashboardView">
+          <section class="login-panel panel" id="loginPanel">
+            <div class="panel-heading">
+              <h3>Login</h3>
+              <span>Admin creates accounts</span>
+            </div>
+            <form id="loginForm" class="form-grid">
+              <input name="loginId" placeholder="Login ID" autocomplete="username" required>
+              <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
+              <button class="primary-button" type="submit">Sign in</button>
+            </form>
+          </section>
+          <div class="metric-grid" id="metrics"></div>
+          <section class="panel live-panel">
+            <div class="panel-heading">
+              <h3>Live Scores</h3>
+              <span id="liveScoresLabel"></span>
+            </div>
+            <div class="live-score-grid" id="liveScores"></div>
+          </section>
+          <section class="panel upcoming-panel">
+            <div class="panel-heading">
+              <h3>Upcoming Matches</h3>
+              <span id="upcomingLabel"></span>
+            </div>
+            <div class="match-board" id="upcomingMatches"></div>
+          </section>
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Leaderboard</h3>
+                <span id="leaderLabel"></span>
+              </div>
+              <div class="leaderboard" id="leaderboard"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Recent Settlements</h3>
+                <span id="settlementCount"></span>
+              </div>
+              <div class="compact-list" id="recentSettlements"></div>
+            </section>
+          </div>
+          <section class="panel match-board-panel">
+            <div class="panel-heading">
+              <h3>Match Board</h3>
+              <span id="matchBoardLabel"></span>
+            </div>
+            <div class="match-board" id="matchBoard"></div>
+          </section>
+        </section>
+
+        <section class="view" id="fixturesView">
+          <div class="toolbar">
+            <input id="searchInput" class="search-input" type="search" placeholder="Search teams, venue, match number">
+            <select id="stageFilter" aria-label="Stage filter"></select>
+            <select id="groupFilter" aria-label="Group filter"></select>
+            <select id="statusFilter" aria-label="Status filter">
+              <option value="all">All matches</option>
+              <option value="settled">Settled</option>
+              <option value="open">Open</option>
+              <option value="needs-picks">Needs picks</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table class="fixture-table">
+              <thead>
+                <tr>
+                  <th>Match</th>
+                  <th>Date</th>
+                  <th>Teams</th>
+                  <th>Scores</th>
+                  <th>Result</th>
+                  <th>M</th>
+                  <th>S</th>
+                  <th>A</th>
+                  <th>Pool</th>
+                  <th>Rollover</th>
+                </tr>
+              </thead>
+              <tbody id="fixturesTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="playersView">
+          <div class="player-grid" id="playerCards"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="data/fixtures.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
