@@ -15,16 +15,24 @@ const TEAM_FLAGS = {
 
 let app = { user: null, state: null };
 let loginPanelOpen = false;
+let profilePanelOpen = false;
+let profileAvatarData = "";
 const refreshIntervalMs = 60 * 1000;
 
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
   viewTitle: document.querySelector("#viewTitle"),
   accountLabel: document.querySelector("#accountLabel"),
+  profileButton: document.querySelector("#profileButton"),
   logoutButton: document.querySelector("#logoutButton"),
   loginPanel: document.querySelector("#loginPanel"),
   loginCloseButton: document.querySelector("#loginCloseButton"),
   loginForm: document.querySelector("#loginForm"),
+  profilePanel: document.querySelector("#profilePanel"),
+  profileCloseButton: document.querySelector("#profileCloseButton"),
+  profileForm: document.querySelector("#profileForm"),
+  profileAvatarInput: document.querySelector("#profileAvatarInput"),
+  profileAvatarPreview: document.querySelector("#profileAvatarPreview"),
   metrics: document.querySelector("#metrics"),
   leaderboard: document.querySelector("#leaderboard"),
   playersLeaderboard: document.querySelector("#playersLeaderboard"),
@@ -60,6 +68,19 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function avatarHtml(user, className = "avatar") {
+  if (user?.avatar_data) {
+    return `<img class="${className}" src="${escapeHtml(user.avatar_data)}" alt="${escapeHtml(user.display_name)} profile picture">`;
+  }
+  const initials = String(user?.display_name || user?.login_id || "26")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "26";
+  return `<span class="${className} avatar-fallback">${escapeHtml(initials)}</span>`;
 }
 
 function icon(name) {
@@ -212,10 +233,38 @@ function renderAccount() {
   const user = app.user;
   elements.accountLabel.textContent = user ? `${user.display_name} (${user.role})` : "Not signed in";
   elements.loginPanel.hidden = Boolean(user) || !loginPanelOpen;
+  elements.profilePanel.hidden = !user || !profilePanelOpen;
+  elements.profileButton.hidden = !user;
   elements.logoutButton.style.display = user ? "" : "none";
   elements.adminSwitchButton.hidden = user?.role !== "admin";
   elements.loginToggleButton.innerHTML = `<i data-lucide="${user ? "user-round" : "log-in"}"></i>${escapeHtml(user ? user.display_name : "Login")}`;
   window.lucide?.createIcons();
+}
+
+function openProfilePanel() {
+  if (!app.user) return;
+  profilePanelOpen = true;
+  profileAvatarData = app.user.avatar_data || "";
+  elements.profileForm.displayName.value = app.user.display_name || "";
+  elements.profileForm.loginId.value = app.user.login_id || "";
+  elements.profileForm.password.value = "";
+  renderProfileAvatarPreview();
+  renderAccount();
+  elements.profileForm.displayName.focus({ preventScroll: true });
+}
+
+function closeProfilePanel() {
+  profilePanelOpen = false;
+  renderAccount();
+  elements.profileButton.focus({ preventScroll: true });
+}
+
+function renderProfileAvatarPreview() {
+  if (profileAvatarData) {
+    elements.profileAvatarPreview.innerHTML = `<img src="${escapeHtml(profileAvatarData)}" alt="">`;
+    return;
+  }
+  elements.profileAvatarPreview.textContent = "26";
 }
 
 function renderMetrics() {
@@ -244,6 +293,7 @@ function renderLeaderboard() {
   elements.leaderboard.innerHTML = rows.length ? rows.map((row, index) => `
     <div class="leader-row">
       <div class="rank">${index + 1}</div>
+      ${avatarHtml(row, "avatar avatar-small")}
       <div>
         <strong>${escapeHtml(row.display_name)}</strong>
         <div class="fixture-subtext stat-line">
@@ -401,6 +451,7 @@ function renderPlayers() {
   elements.playersLeaderboard.innerHTML = rows.length ? rows.map((row, index) => `
     <div class="leader-row">
       <div class="rank">${index + 1}</div>
+      ${avatarHtml(row, "avatar avatar-small")}
       <div>
         <strong>${escapeHtml(row.display_name)}</strong>
         <div class="fixture-subtext">${row.correct}/${row.settled} correct, ${row.bets_entered} bets entered</div>
@@ -410,7 +461,10 @@ function renderPlayers() {
   `).join("") : `<div class="empty-state">No player rankings yet.</div>`;
   elements.playerCards.innerHTML = (app.state.leaderboard || []).map((row, index) => `
     <article class="player-card">
-      <h3>${index + 1}. ${escapeHtml(row.display_name)}</h3>
+      <div class="player-card-header">
+        ${avatarHtml(row, "avatar avatar-large")}
+        <h3>${index + 1}. ${escapeHtml(row.display_name)}</h3>
+      </div>
       <div class="player-badge-row">
         <span class="player-badge">${icon("medal")}Rank #${index + 1}</span>
         <span class="player-badge">${icon("target")}${row.settled ? Math.round((row.correct / row.settled) * 100) : 0}% Accuracy</span>
@@ -627,7 +681,62 @@ elements.loginForm.addEventListener("submit", async (event) => {
 
 elements.logoutButton.addEventListener("click", async () => {
   await api("/api/logout", { method: "POST", body: "{}" });
+  profilePanelOpen = false;
   await refresh();
+});
+
+elements.profileButton.addEventListener("click", openProfilePanel);
+
+elements.profileCloseButton.addEventListener("click", closeProfilePanel);
+
+elements.profilePanel.addEventListener("click", (event) => {
+  if (event.target !== elements.profilePanel) return;
+  closeProfilePanel();
+});
+
+elements.profileAvatarInput.addEventListener("change", async () => {
+  const file = elements.profileAvatarInput.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    elements.saveStatus.textContent = "Profile picture must be an image";
+    elements.profileAvatarInput.value = "";
+    return;
+  }
+  if (file.size > 550_000) {
+    elements.saveStatus.textContent = "Profile picture must be smaller than 550 KB";
+    elements.profileAvatarInput.value = "";
+    return;
+  }
+  profileAvatarData = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  renderProfileAvatarPreview();
+});
+
+elements.profileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const formData = Object.fromEntries(new FormData(elements.profileForm));
+    const payload = await api("/api/profile", {
+      method: "PATCH",
+      body: JSON.stringify({
+        displayName: formData.displayName,
+        loginId: formData.loginId,
+        password: formData.password,
+        avatarData: profileAvatarData,
+      }),
+    });
+    app.user = payload.user;
+    app.state = payload.state;
+    profilePanelOpen = false;
+    elements.saveStatus.textContent = "Profile updated";
+    renderAll();
+  } catch (error) {
+    elements.saveStatus.textContent = error.message;
+  }
 });
 
 elements.loginToggleButton.addEventListener("click", () => {
@@ -652,7 +761,12 @@ elements.loginPanel.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || elements.loginPanel.hidden) return;
+  if (event.key !== "Escape") return;
+  if (!elements.profilePanel.hidden) {
+    closeProfilePanel();
+    return;
+  }
+  if (elements.loginPanel.hidden) return;
   loginPanelOpen = false;
   renderAccount();
   elements.loginToggleButton.focus({ preventScroll: true });

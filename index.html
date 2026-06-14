@@ -30,6 +30,7 @@
           <h2 id="settings-title">Account</h2>
           <p id="accountLabel">Not signed in</p>
           <div class="button-stack">
+            <button id="profileButton" class="secondary-button" type="button" hidden><i data-lucide="user-cog"></i>Profile</button>
             <button id="logoutButton" class="secondary-button" type="button"><i data-lucide="log-out"></i>Logout</button>
           </div>
         </section>
@@ -68,6 +69,35 @@
             <div class="login-footnote">
               <i data-lucide="shield-check"></i>
               <span>Your session is stored securely in this browser.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="login-panel login-panel-floating" id="profilePanel" hidden>
+          <div class="login-dialog profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+            <button class="login-close-button" id="profileCloseButton" type="button" aria-label="Close profile">
+              <i data-lucide="x"></i>
+            </button>
+            <div class="profile-avatar-editor">
+              <div class="profile-avatar-preview" id="profileAvatarPreview" aria-hidden="true">26</div>
+              <label class="secondary-light-button profile-upload-button">
+                <i data-lucide="image-up"></i>Upload photo
+                <input id="profileAvatarInput" name="avatar" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+              </label>
+            </div>
+            <div class="login-copy">
+              <h3 id="profileTitle">Edit Profile</h3>
+              <p>Update your display name, login ID, password, and public profile picture.</p>
+            </div>
+            <form id="profileForm" class="login-form">
+              <input name="displayName" placeholder="Display name" autocomplete="name" required>
+              <input name="loginId" placeholder="Login ID" autocomplete="username" required>
+              <input name="password" placeholder="New password (optional)" type="password" autocomplete="new-password">
+              <button class="primary-button" type="submit"><i data-lucide="save"></i>Save Profile</button>
+            </form>
+            <div class="login-footnote">
+              <i data-lucide="info"></i>
+              <span>Profile pictures are stored in the app database and shown on player cards.</span>
             </div>
           </div>
         </section>

@@ -119,6 +119,18 @@ function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"));
 }
 
+function cleanAvatarData(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const avatar = String(value);
+  if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(avatar)) {
+    throw new Error("Profile picture must be a PNG, JPG, GIF, or WebP image");
+  }
+  if (Buffer.byteLength(avatar, "utf8") > 750_000) {
+    throw new Error("Profile picture must be smaller than 750 KB");
+  }
+  return avatar;
+}
+
 function parseCookies(request) {
   return Object.fromEntries((request.headers.cookie || "").split(";").filter(Boolean).map((cookie) => {
     const [key, ...rest] = cookie.trim().split("=");
@@ -197,6 +209,7 @@ async function initDb() {
       display_name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin','player')),
+      avatar_data TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -252,6 +265,12 @@ async function initDb() {
 
   try {
     await runSql("ALTER TABLE matches ADD COLUMN match_status TEXT;");
+  } catch (error) {
+    if (!String(error.message).includes("duplicate column name")) throw error;
+  }
+
+  try {
+    await runSql("ALTER TABLE users ADD COLUMN avatar_data TEXT;");
   } catch (error) {
     if (!String(error.message).includes("duplicate column name")) throw error;
   }
@@ -322,7 +341,7 @@ async function currentUser(request) {
   const token = parseCookies(request)[sessionCookie];
   if (!token) return null;
   const rows = await runSql(`
-    SELECT users.id, users.login_id, users.display_name, users.role
+    SELECT users.id, users.login_id, users.display_name, users.role, users.avatar_data
     FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ${sqlValue(token)}
@@ -330,6 +349,16 @@ async function currentUser(request) {
       AND users.is_active = 1;
   `, true);
   return rows[0] || null;
+}
+
+function publicUser(user) {
+  return user ? {
+    id: user.id,
+    login_id: user.login_id,
+    display_name: user.display_name,
+    role: user.role,
+    avatar_data: user.avatar_data || "",
+  } : null;
 }
 
 async function requireUser(request, response) {
@@ -368,7 +397,7 @@ async function appState(user = null) {
   const [settingsRows, matches, users, bets] = await Promise.all([
     runSql("SELECT key, value FROM settings;", true),
     runSql("SELECT * FROM matches ORDER BY id;", true),
-    runSql("SELECT id, login_id, display_name, role, is_active, created_at FROM users ORDER BY role, display_name;", true),
+    runSql("SELECT id, login_id, display_name, role, avatar_data, is_active, created_at FROM users ORDER BY role, display_name;", true),
     runSql("SELECT * FROM bets ORDER BY match_id, user_id;", true),
   ]);
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
@@ -378,6 +407,7 @@ async function appState(user = null) {
     user_id: player.id,
     login_id: player.login_id,
     display_name: player.display_name,
+    avatar_data: player.avatar_data,
     bets_entered: 0,
     settled: 0,
     correct: 0,
@@ -685,7 +715,7 @@ async function router(request, response) {
     const token = crypto.randomBytes(32).toString("hex");
     await runSql(`INSERT INTO sessions(token, user_id, expires_at) VALUES (${sqlValue(token)}, ${user.id}, datetime('now', '+7 days'));`);
     const secureCookieFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
-    sendJson(response, 200, { ok: true, user: { id: user.id, login_id: user.login_id, display_name: user.display_name, role: user.role } }, {
+    sendJson(response, 200, { ok: true, user: publicUser(user) }, {
       "set-cookie": `${sessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}${secureCookieFlag}`,
     });
     return;
@@ -700,7 +730,47 @@ async function router(request, response) {
   }
 
   if (request.method === "GET" && url.pathname === "/api/me") {
-    sendJson(response, 200, { user: await currentUser(request) });
+    sendJson(response, 200, { user: publicUser(await currentUser(request)) });
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname === "/api/profile") {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    const body = await readBody(request);
+    const displayName = String(body.displayName || "").trim();
+    const loginId = String(body.loginId || "").trim();
+    const password = String(body.password || "");
+    if (!displayName || !loginId) {
+      sendJson(response, 400, { ok: false, error: "Display name and login ID are required" });
+      return;
+    }
+    let avatarData;
+    try {
+      avatarData = cleanAvatarData(body.avatarData);
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: error.message });
+      return;
+    }
+    const passwordSql = password ? `, password_hash = ${sqlValue(hashPassword(password))}` : "";
+    try {
+      await runSql(`
+        UPDATE users
+        SET display_name = ${sqlValue(displayName)},
+            login_id = ${sqlValue(loginId)},
+            avatar_data = ${sqlValue(avatarData)}
+            ${passwordSql}
+        WHERE id = ${sqlValue(user.id)};
+      `);
+    } catch (error) {
+      if (String(error.message).includes("UNIQUE constraint failed")) {
+        sendJson(response, 409, { ok: false, error: "That login ID is already in use" });
+        return;
+      }
+      throw error;
+    }
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'profile.updated', ${sqlValue(JSON.stringify({ displayName, loginId, avatarUpdated: Boolean(avatarData), passwordUpdated: Boolean(password) }))});`);
+    sendJson(response, 200, { ok: true, user: publicUser((await currentUser(request))), state: await appState(await currentUser(request)) });
     return;
   }
 
