@@ -434,9 +434,10 @@ async function syncSportsResults() {
   const footballDataCompetition = process.env.FOOTBALL_DATA_COMPETITION || "WC";
   const footballDataSeason = process.env.FOOTBALL_DATA_SEASON || "2026";
   const dateWindowDays = Math.max(1, Number(process.env.FOOTBALL_DATA_DATE_WINDOW_DAYS || 3));
-  const syncMode = process.env.FOOTBALL_DATA_SYNC_MODE || "competition";
+  const syncMode = process.env.FOOTBALL_DATA_SYNC_MODE || "auto";
+  const competitionMatchesUrl = `${footballDataBaseUrl}/competitions/${encodeURIComponent(footballDataCompetition)}/matches`;
   const apiUrl = process.env.SPORTS_API_URL || (footballDataKey
-    ? `${footballDataBaseUrl}/competitions/${encodeURIComponent(footballDataCompetition)}/matches?season=${encodeURIComponent(footballDataSeason)}`
+    ? `${competitionMatchesUrl}?season=${encodeURIComponent(footballDataSeason)}`
     : "");
   const apiKey = footballDataKey;
 
@@ -464,11 +465,14 @@ async function syncSportsResults() {
 
   async function fetchApiJson(url) {
     const response = await fetch(url, { headers });
-    if (!response.ok) throw new Error(`football-data.org API failed: ${response.status}`);
-    const payload = await response.json();
-    const apiErrors = response.ok ? null : payload;
+    const payload = await response.json().catch(() => ({}));
+    const apiErrors = response.ok ? null : {
+      status: response.status,
+      statusText: response.statusText,
+      body: payload,
+    };
     return {
-      rows: payload.matches || payload.response || payload.events || [],
+      rows: response.ok ? payload.matches || payload.response || payload.events || [] : [],
       errors: apiErrors,
       url,
     };
@@ -484,8 +488,8 @@ async function syncSportsResults() {
     const after = dateWindowDays - before - 1;
     const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - before));
     const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + after + 1));
-    const separator = apiUrl.includes("?") ? "&" : "?";
-    return fetchApiJson(`${apiUrl}${separator}dateFrom=${dateOnly(start)}&dateTo=${dateOnly(end)}`);
+    const dateWindowUrl = process.env.SPORTS_API_URL || `${competitionMatchesUrl}?dateFrom=${dateOnly(start)}&dateTo=${dateOnly(end)}`;
+    return fetchApiJson(dateWindowUrl);
   }
 
   let apiResult;
