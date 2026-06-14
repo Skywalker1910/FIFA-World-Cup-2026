@@ -180,17 +180,48 @@ function countdownText(fixture) {
 function fixtureStatusLabel(fixture) {
   if (fixture.result || isFinalFixture(fixture)) return "Final";
   if (fixture.locked) return "Locked";
-  if (hasScore(fixture)) return fixture.status || "Live";
+  if (hasScore(fixture)) return displayStatusLabel(fixture.status || "Live");
   return "Open";
 }
 
+function displayStatusLabel(label) {
+  const normalized = String(label || "").toLowerCase();
+  if (normalized === "paused" || normalized === "pause" || normalized === "ht" || normalized.includes("half")) return "Half-Time";
+  if (normalized === "in_play" || normalized === "in-play" || normalized === "in progress") return "Live";
+  if (normalized === "ft" || normalized === "finished") return "Final";
+  return label || "";
+}
+
+function statusBadgeClass(label) {
+  const normalized = String(label || "").toLowerCase();
+  if (normalized.includes("half") || normalized === "paused" || normalized === "pause" || normalized === "ht") return "half";
+  if (normalized.includes("live") || normalized.includes("progress")) return "live";
+  if (normalized.includes("locked")) return "locked";
+  if (normalized.includes("open")) return "open";
+  if (normalized.includes("ended") || normalized.includes("final") || normalized.includes("finished") || normalized === "ft") return "ended";
+  return "neutral";
+}
+
+function statusBadge(label) {
+  const value = displayStatusLabel(label) || "-";
+  return `<span class="status-badge status-${statusBadgeClass(value)}">${escapeHtml(value)}</span>`;
+}
+
 function matchMetaChips(fixture) {
+  const statusLabel = fixtureStatusLabel(fixture);
+  const countdownLabel = countdownText(fixture);
+  const countdownStatusClass = ["live", "half", "ended"].includes(statusBadgeClass(countdownLabel))
+    ? `match-chip-status status-${statusBadgeClass(countdownLabel)}`
+    : "";
   const chips = [
-    fixture.group ? `Group ${fixture.group}` : fixture.stage,
-    fixtureStatusLabel(fixture),
-    countdownText(fixture),
+    { label: fixture.group ? `Group ${fixture.group}` : fixture.stage, className: "" },
+    { label: statusLabel, className: `match-chip-status status-${statusBadgeClass(statusLabel)}` },
+    { label: countdownLabel, className: countdownStatusClass },
   ].filter(Boolean);
-  return `<div class="match-chip-row">${chips.map((chip) => `<span class="match-chip">${escapeHtml(chip)}</span>`).join("")}</div>`;
+  return `<div class="match-chip-row">${chips
+    .filter((chip) => chip.label)
+    .map((chip) => `<span class="match-chip ${chip.className}">${escapeHtml(chip.label)}</span>`)
+    .join("")}</div>`;
 }
 
 function resolvedResult(fixture) {
@@ -357,11 +388,11 @@ function renderLiveScores() {
   elements.liveScoresLabel.textContent = matches.length ? "Ongoing now" : "Latest scores";
   elements.liveScores.innerHTML = rows.length ? rows.map((fixture) => `
     <article class="live-score-card">
-      <div class="match-card-meta"><span>#${fixture.id}</span><span>${escapeHtml(fixture.status || (matches.length ? "Live" : "Final"))}</span></div>
+      <div class="match-card-meta"><span>#${fixture.id}</span>${statusBadge(matches.length && !isFinalFixture(fixture) ? fixture.status || "Live" : fixture.status || "Final")}</div>
       ${matchMetaChips(fixture)}
       <div class="score-line">${teamBadge(fixture.team1)}<strong>${fixture.team1Score ?? "-"}</strong></div>
       <div class="score-line">${teamBadge(fixture.team2)}<strong>${fixture.team2Score ?? "-"}</strong></div>
-      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(fixture.status || "In progress")}</strong></div>
+      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(displayStatusLabel(fixture.status || "In progress"))}</strong></div>
     </article>
   `).join("") : `<div class="empty-state">No synced scores yet.</div>`;
   elements.liveTicker.innerHTML = rows.length ? `
@@ -436,7 +467,7 @@ function renderFixtures() {
         <td><div class="team-line">${teamBadge(fixture.team1)}</div><div class="team-line">${teamBadge(fixture.team2)}</div><div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div></td>
         <td><strong>${fixture.team1Score ?? "-"} - ${fixture.team2Score ?? "-"}</strong></td>
         <td>${escapeHtml(resultText)}</td>
-        <td><span class="status-badge status-${betStatus.toLowerCase()}">${escapeHtml(betStatus)}</span></td>
+        <td>${statusBadge(betStatus)}</td>
         <td>
           <select data-bet ${canBet ? "" : "disabled"}>${optionList(fixture.myPick)}</select>
           <div class="fixture-subtext">${canBet ? "Place or update your pick" : fixture.myPick ? `Your pick: ${resultLabel(fixture, fixture.myPick)}` : "Login as player before lock"}</div>
@@ -814,7 +845,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 elements.fixturesTable.addEventListener("change", async (event) => {
-  if (!event.target.dataset.bet) return;
+  if (!event.target.matches("[data-bet]")) return;
   const row = event.target.closest("tr[data-id]");
   if (!row || !event.target.value) return;
   const payload = await api("/api/bets", { method: "POST", body: JSON.stringify({ matchId: Number(row.dataset.id), pick: event.target.value }) });

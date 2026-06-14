@@ -2500,6 +2500,58 @@ input::placeholder {
   text-transform: none;
 }
 
+.match-chip-status {
+  gap: 7px;
+  border: 1px solid transparent;
+}
+
+.match-chip-status::before {
+  content: "";
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.match-chip-status.status-live {
+  background: rgba(0, 200, 83, 0.12);
+  border-color: rgba(0, 200, 83, 0.24);
+  color: #138a37;
+}
+
+.match-chip-status.status-live::before {
+  display: inline-block;
+  box-shadow:
+    0 0 0 4px rgba(0, 230, 118, 0.16),
+    0 0 14px rgba(0, 230, 118, 0.7);
+  animation: live-dot-pulse 1.6s ease-in-out infinite;
+}
+
+.match-chip-status.status-half {
+  background: rgba(255, 204, 0, 0.16);
+  border-color: rgba(255, 204, 0, 0.28);
+  color: #8a5a00;
+}
+
+.match-chip-status.status-open {
+  background: rgba(10, 132, 255, 0.11);
+  border-color: rgba(10, 132, 255, 0.2);
+  color: #0066cc;
+}
+
+.match-chip-status.status-locked {
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.24);
+  color: #d70015;
+}
+
+.match-chip-status.status-ended {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.06);
+  color: #6e6e73;
+}
+
 .score-line,
 .bracket-teams > div {
   border: 0;
@@ -2839,26 +2891,79 @@ input::placeholder {
 .status-badge {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   border-radius: 999px;
-  padding: 4px 9px;
+  border: 1px solid transparent;
+  padding: 4px 10px;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 
+.status-badge::before {
+  content: "";
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.status-live {
+  background: rgba(0, 200, 83, 0.12);
+  border-color: rgba(0, 200, 83, 0.24);
+  color: #138a37;
+}
+
+.status-live::before {
+  display: inline-block;
+  box-shadow:
+    0 0 0 4px rgba(0, 230, 118, 0.16),
+    0 0 14px rgba(0, 230, 118, 0.7);
+  animation: live-dot-pulse 1.6s ease-in-out infinite;
+}
+
+.status-half {
+  background: rgba(255, 204, 0, 0.16);
+  border-color: rgba(255, 204, 0, 0.28);
+  color: #8a5a00;
+}
+
 .status-open {
-  background: rgba(52, 199, 89, 0.12);
-  color: #248a3d;
+  background: rgba(10, 132, 255, 0.11);
+  border-color: rgba(10, 132, 255, 0.2);
+  color: #0066cc;
 }
 
 .status-locked {
-  background: rgba(255, 149, 0, 0.14);
-  color: #b25a00;
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.24);
+  color: #d70015;
 }
 
 .status-ended {
   background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.06);
   color: #6e6e73;
+}
+
+.status-neutral {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.06);
+  color: #6e6e73;
+}
+
+@keyframes live-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(0.95);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
 }
 
 .inline-icon {
