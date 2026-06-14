@@ -7,6 +7,8 @@ const { execFile } = require("node:child_process");
 const rootDir = __dirname;
 
 function loadLocalEnv() {
+  if (process.env.NODE_ENV === "production") return;
+
   const envPath = path.join(rootDir, ".env");
   if (!fs.existsSync(envPath)) return;
 
