@@ -144,6 +144,7 @@ function renderAdmin() {
       </select>
       <label class="admin-check"><input data-user-field="isActive" type="checkbox" ${user.is_active ? "checked" : ""}> Active</label>
       <button class="secondary-light-button" data-save-user="true" type="button">Save</button>
+      <button class="danger-button admin-delete-button" data-delete-user="true" type="button" ${user.id === app.user?.id ? "disabled title=\"You cannot delete your own admin account\"" : ""}>Delete</button>
     </div>
   `).join("");
   elements.adminMatches.innerHTML = app.state.fixtures.map((fixture) => `
@@ -319,6 +320,22 @@ elements.adminMatches.addEventListener("click", async (event) => {
 });
 
 elements.adminUsers.addEventListener("click", async (event) => {
+  const deleteButton = event.target.closest("[data-delete-user]");
+  if (deleteButton) {
+    const row = deleteButton.closest(".admin-user");
+    const userName = row.querySelector(".admin-item-title strong")?.textContent || "this user";
+    if (!window.confirm(`Delete ${userName}? This removes their account, sessions, and bets.`)) return;
+    try {
+      const payload = await api(`/api/admin/users/${row.dataset.id}/delete`, { method: "POST", body: "{}" });
+      app.state = payload.state;
+      setStatus("User deleted");
+      renderAll();
+    } catch (error) {
+      setStatus(error.message);
+    }
+    return;
+  }
+
   const button = event.target.closest("[data-save-user]");
   if (!button) return;
   const row = button.closest(".admin-user");

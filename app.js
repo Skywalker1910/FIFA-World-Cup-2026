@@ -47,6 +47,8 @@ const elements = {
   upcomingMatches: document.querySelector("#upcomingMatches"),
   upcomingLabel: document.querySelector("#upcomingLabel"),
   fixturesTable: document.querySelector("#fixturesTable"),
+  publicBetsHead: document.querySelector("#publicBetsHead"),
+  publicBetsBody: document.querySelector("#publicBetsBody"),
   playerCards: document.querySelector("#playerCards"),
   allFixtures: document.querySelector("#allFixtures"),
   allFixturesLabel: document.querySelector("#allFixturesLabel"),
@@ -481,6 +483,40 @@ function renderPlayers() {
   window.lucide?.createIcons();
 }
 
+function publicPickLabel(fixture, pick) {
+  if (!pick) return "-";
+  if (pick === "Team 1") return displayTeamName(fixture.team1);
+  if (pick === "Team 2") return displayTeamName(fixture.team2);
+  return "Draw";
+}
+
+function renderPublicBets() {
+  const players = app.state.players || [];
+  elements.publicBetsHead.innerHTML = `
+    <tr>
+      <th>Match</th>
+      <th>Date</th>
+      ${players.map((player) => `<th>${escapeHtml(player.display_name)}</th>`).join("")}
+    </tr>
+  `;
+  elements.publicBetsBody.innerHTML = app.state.fixtures.map((fixture) => `
+    <tr>
+      <td>
+        <strong>#${fixture.id}</strong>
+        <div class="fixture-subtext">${escapeHtml(fixture.stage || "")} ${escapeHtml(fixture.group || "")}</div>
+      </td>
+      <td>
+        <strong>${dateLabel(fixture.date)}</strong>
+        <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div>
+      </td>
+      ${players.map((player) => {
+        const pick = fixture.bets[player.id] || "";
+        return `<td><span class="pick-chip ${pick ? "has-pick" : ""}">${escapeHtml(publicPickLabel(fixture, pick))}</span></td>`;
+      }).join("")}
+    </tr>
+  `).join("");
+}
+
 function renderAllFixtures() {
   const fixtures = [...app.state.fixtures].sort((a, b) => {
     const dateSort = matchStartTime(a) - matchStartTime(b);
@@ -636,6 +672,7 @@ function renderAll() {
   renderRecentSettlements();
   renderMatchBoard();
   renderFixtures();
+  renderPublicBets();
   renderPlayers();
   renderAllFixtures();
   renderGroupTables();

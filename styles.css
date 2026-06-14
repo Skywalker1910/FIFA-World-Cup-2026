@@ -2794,6 +2794,28 @@ input::placeholder {
   margin: 0;
 }
 
+.public-bets-table {
+  min-width: 760px;
+}
+
+.pick-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #6e6e73;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pick-chip.has-pick {
+  background: rgba(10, 132, 255, 0.1);
+  color: #0066cc;
+}
+
 .admin-login-badge {
   width: fit-content;
   display: inline-flex;
@@ -2957,12 +2979,16 @@ input::placeholder {
 
 .admin-user {
   display: grid;
-  grid-template-columns: minmax(220px, 1.1fr) repeat(3, minmax(150px, 0.8fr)) 120px 96px 84px;
+  grid-template-columns: minmax(220px, 1.1fr) repeat(3, minmax(150px, 0.8fr)) 120px 96px 84px 84px;
   gap: 12px;
   align-items: center;
   margin-top: 12px;
   padding: 14px;
   border-radius: 18px;
+}
+
+.admin-delete-button {
+  min-height: 36px;
 }
 
 .admin-match {

@@ -885,6 +885,37 @@ async function router(request, response) {
     return;
   }
 
+  if (
+    (request.method === "DELETE" && url.pathname.startsWith("/api/admin/users/"))
+    || (request.method === "POST" && /^\/api\/admin\/users\/\d+\/delete$/.test(url.pathname))
+  ) {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const parts = url.pathname.split("/");
+    const id = Number(request.method === "POST" ? parts.at(-2) : parts.at(-1));
+    if (!Number.isFinite(id)) {
+      sendJson(response, 400, { ok: false, error: "Invalid user ID" });
+      return;
+    }
+    if (id === admin.id) {
+      sendJson(response, 400, { ok: false, error: "You cannot delete your own admin account" });
+      return;
+    }
+    const users = await runSql(`SELECT id, login_id, display_name, role FROM users WHERE id = ${sqlValue(id)};`, true);
+    if (!users[0]) {
+      sendJson(response, 404, { ok: false, error: "User not found" });
+      return;
+    }
+    await runSql(`
+      DELETE FROM bets WHERE user_id = ${sqlValue(id)};
+      DELETE FROM sessions WHERE user_id = ${sqlValue(id)};
+      DELETE FROM users WHERE id = ${sqlValue(id)};
+    `);
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.user.deleted', ${sqlValue(JSON.stringify(users[0]))});`);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/admin/settings") {
     const admin = await requireAdmin(request, response);
     if (!admin) return;

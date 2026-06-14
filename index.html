@@ -20,6 +20,7 @@
         <nav class="nav-tabs" aria-label="App views">
           <button class="nav-tab active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i>Dashboard</button>
           <button class="nav-tab" data-view="fixtures" type="button"><i data-lucide="ticket-check"></i>Bets</button>
+          <button class="nav-tab" data-view="publicBets" type="button"><i data-lucide="list-checks"></i>Bets Placed</button>
           <button class="nav-tab" data-view="tournament" type="button"><i data-lucide="calendar-days"></i>Tournament</button>
           <button class="nav-tab" data-view="groups" type="button"><i data-lucide="table-2"></i>Groups</button>
           <button class="nav-tab" data-view="roadmap" type="button"><i data-lucide="git-merge"></i>Road To Final</button>
@@ -185,6 +186,21 @@
             <div class="players-leaderboard" id="playersLeaderboard"></div>
           </section>
           <div class="player-grid" id="playerCards"></div>
+        </section>
+
+        <section class="view" id="publicBetsView">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Bets Placed</h3>
+              <span>All player picks by match</span>
+            </div>
+            <div class="table-wrap">
+              <table class="fixture-table public-bets-table">
+                <thead id="publicBetsHead"></thead>
+                <tbody id="publicBetsBody"></tbody>
+              </table>
+            </div>
+          </section>
         </section>
 
         <section class="view" id="tournamentView">
