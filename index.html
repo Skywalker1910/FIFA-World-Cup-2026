@@ -20,6 +20,7 @@
         <nav class="nav-tabs" aria-label="App views">
           <button class="nav-tab active" data-view="dashboard" type="button">Dashboard</button>
           <button class="nav-tab" data-view="fixtures" type="button">Bets</button>
+          <button class="nav-tab" data-view="tournament" type="button">Tournament</button>
           <button class="nav-tab" data-view="players" type="button">Profiles</button>
         </nav>
 
@@ -28,7 +29,6 @@
           <p id="accountLabel">Not signed in</p>
           <div class="button-stack">
             <button id="logoutButton" class="secondary-button" type="button">Logout</button>
-            <a class="secondary-button file-button" href="/api/export-workbook">Download Excel</a>
           </div>
         </section>
       </aside>
@@ -132,6 +132,32 @@
 
         <section class="view" id="playersView">
           <div class="player-grid" id="playerCards"></div>
+        </section>
+
+        <section class="view" id="tournamentView">
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>All Match Fixtures</h3>
+              <span id="allFixturesLabel"></span>
+            </div>
+            <div class="tournament-fixture-list" id="allFixtures"></div>
+          </section>
+
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>Group Tables</h3>
+              <span>Group-stage points update from final results</span>
+            </div>
+            <div class="group-table-grid" id="groupTables"></div>
+          </section>
+
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>Road To The Final</h3>
+              <span id="roadmapLabel"></span>
+            </div>
+            <div class="roadmap" id="roadmap"></div>
+          </section>
         </section>
       </main>
     </div>

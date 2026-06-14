@@ -36,6 +36,11 @@ const elements = {
   upcomingLabel: document.querySelector("#upcomingLabel"),
   fixturesTable: document.querySelector("#fixturesTable"),
   playerCards: document.querySelector("#playerCards"),
+  allFixtures: document.querySelector("#allFixtures"),
+  allFixturesLabel: document.querySelector("#allFixturesLabel"),
+  groupTables: document.querySelector("#groupTables"),
+  roadmap: document.querySelector("#roadmap"),
+  roadmapLabel: document.querySelector("#roadmapLabel"),
   searchInput: document.querySelector("#searchInput"),
   stageFilter: document.querySelector("#stageFilter"),
   groupFilter: document.querySelector("#groupFilter"),
@@ -123,6 +128,19 @@ function hasScore(fixture) {
 
 function scoreText(fixture) {
   return hasScore(fixture) ? `${fixture.team1Score} - ${fixture.team2Score}` : "-";
+}
+
+function resolvedResult(fixture) {
+  if (fixture.result) return fixture.result;
+  if (!hasScore(fixture)) return "";
+  if (Number(fixture.team1Score) > Number(fixture.team2Score)) return "Team 1";
+  if (Number(fixture.team2Score) > Number(fixture.team1Score)) return "Team 2";
+  return "Draw";
+}
+
+function isFinalFixture(fixture) {
+  const status = String(fixture.status || "").toUpperCase();
+  return Boolean(fixture.result) || ["FT", "AET", "PEN"].includes(status);
 }
 
 function optionList(selected, labels = PICK_OPTIONS) {
@@ -301,6 +319,143 @@ function renderPlayers() {
   `).join("") || `<div class="empty-state">No public player profiles yet.</div>`;
 }
 
+function renderAllFixtures() {
+  const fixtures = [...app.state.fixtures].sort((a, b) => {
+    const dateSort = matchStartTime(a) - matchStartTime(b);
+    return Number.isFinite(dateSort) && dateSort !== 0 ? dateSort : a.id - b.id;
+  });
+  elements.allFixturesLabel.textContent = `${fixtures.length} matches`;
+  elements.allFixtures.innerHTML = fixtures.map((fixture) => `
+    <article class="tournament-fixture-card ${fixture.result ? "is-final" : ""}">
+      <div class="match-card-meta">
+        <span>#${fixture.id} ${escapeHtml(fixture.stage || "")}${fixture.group ? ` / Group ${escapeHtml(fixture.group)}` : ""}</span>
+        <span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span>
+      </div>
+      <div class="fixture-card-body">
+        <div>
+          <div class="score-line">${teamBadge(fixture.team1)}<strong>${fixture.team1Score ?? "-"}</strong></div>
+          <div class="score-line">${teamBadge(fixture.team2)}<strong>${fixture.team2Score ?? "-"}</strong></div>
+        </div>
+        <div class="fixture-status">
+          <strong>${fixture.result ? resultLabel(fixture, fixture.result) : hasScore(fixture) ? escapeHtml(fixture.status || "Score updated") : "Not started"}</strong>
+          <span>${escapeHtml(fixture.venue || "")}</span>
+        </div>
+      </div>
+    </article>
+  `).join("");
+}
+
+function emptyStanding(team) {
+  return { team, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0 };
+}
+
+function groupStandings() {
+  const groups = new Map();
+  app.state.fixtures
+    .filter((fixture) => fixture.group)
+    .forEach((fixture) => {
+      if (!groups.has(fixture.group)) groups.set(fixture.group, new Map());
+      const table = groups.get(fixture.group);
+      if (!table.has(fixture.team1)) table.set(fixture.team1, emptyStanding(fixture.team1));
+      if (!table.has(fixture.team2)) table.set(fixture.team2, emptyStanding(fixture.team2));
+      if (!hasScore(fixture) || !isFinalFixture(fixture)) return;
+
+      const home = table.get(fixture.team1);
+      const away = table.get(fixture.team2);
+      const homeGoals = Number(fixture.team1Score);
+      const awayGoals = Number(fixture.team2Score);
+      home.played += 1;
+      away.played += 1;
+      home.gf += homeGoals;
+      home.ga += awayGoals;
+      away.gf += awayGoals;
+      away.ga += homeGoals;
+
+      if (homeGoals > awayGoals) {
+        home.won += 1;
+        away.lost += 1;
+        home.points += 3;
+      } else if (awayGoals > homeGoals) {
+        away.won += 1;
+        home.lost += 1;
+        away.points += 3;
+      } else {
+        home.drawn += 1;
+        away.drawn += 1;
+        home.points += 1;
+        away.points += 1;
+      }
+      home.gd = home.gf - home.ga;
+      away.gd = away.gf - away.ga;
+    });
+
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([group, table]) => ({
+    group,
+    rows: [...table.values()].sort((a, b) =>
+      b.points - a.points
+      || b.gd - a.gd
+      || b.gf - a.gf
+      || a.team.localeCompare(b.team)
+    ),
+  }));
+}
+
+function renderGroupTables() {
+  elements.groupTables.innerHTML = groupStandings().map(({ group, rows }) => `
+    <article class="group-table-card">
+      <h3>Group ${escapeHtml(group)}</h3>
+      <table class="standings-table">
+        <thead>
+          <tr>
+            <th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row, index) => `
+            <tr class="${index < 2 ? "qualifier-row" : ""}">
+              <td>${teamBadge(row.team, { compact: true })}</td>
+              <td>${row.played}</td>
+              <td>${row.won}</td>
+              <td>${row.drawn}</td>
+              <td>${row.lost}</td>
+              <td>${row.gd > 0 ? `+${row.gd}` : row.gd}</td>
+              <td><strong>${row.points}</strong></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </article>
+  `).join("");
+}
+
+function renderRoadmap() {
+  const stageOrder = ["Round of 32", "Round of 16", "Quarterfinal", "Semifinal", "Third-Place Match", "Final"];
+  const knockout = stageOrder
+    .map((stage) => ({
+      stage,
+      fixtures: app.state.fixtures.filter((fixture) => fixture.stage === stage),
+    }))
+    .filter((round) => round.fixtures.length);
+  elements.roadmapLabel.textContent = `${knockout.reduce((total, round) => total + round.fixtures.length, 0)} knockout matches`;
+  elements.roadmap.innerHTML = knockout.map((round) => `
+    <section class="roadmap-round">
+      <h3>${escapeHtml(round.stage)}</h3>
+      <div class="roadmap-match-list">
+        ${round.fixtures.map((fixture) => `
+          <article class="roadmap-match">
+            <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
+            <div class="roadmap-teams">
+              <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(fixture.team1, { compact: true })}<strong>${fixture.team1Score ?? ""}</strong></div>
+              <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(fixture.team2, { compact: true })}<strong>${fixture.team2Score ?? ""}</strong></div>
+            </div>
+            <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")} / ${escapeHtml(fixture.venue || "")}</div>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `).join("");
+}
+
 function renderAll() {
   renderAccount();
   if (!app.state) return;
@@ -313,6 +468,9 @@ function renderAll() {
   renderMatchBoard();
   renderFixtures();
   renderPlayers();
+  renderAllFixtures();
+  renderGroupTables();
+  renderRoadmap();
 }
 
 async function refresh() {

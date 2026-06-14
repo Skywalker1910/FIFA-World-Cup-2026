@@ -693,6 +693,141 @@ button {
   list-style: none;
 }
 
+.tournament-panel {
+  margin-bottom: 16px;
+}
+
+.tournament-fixture-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.tournament-fixture-card,
+.group-table-card,
+.roadmap-match {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tournament-fixture-card {
+  padding: 14px;
+}
+
+.tournament-fixture-card.is-final {
+  background: linear-gradient(180deg, rgba(15, 124, 86, 0.08), rgba(255, 255, 255, 0) 84px), #fff;
+}
+
+.fixture-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.34fr);
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.fixture-status {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+  text-align: right;
+}
+
+.fixture-status span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.group-table-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.group-table-card {
+  overflow: hidden;
+}
+
+.group-table-card h3 {
+  margin: 0;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #f9fbf7;
+}
+
+.standings-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.standings-table th,
+.standings-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  font-size: 13px;
+}
+
+.standings-table th:first-child,
+.standings-table td:first-child {
+  text-align: left;
+}
+
+.standings-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.qualifier-row {
+  background: rgba(15, 124, 86, 0.06);
+}
+
+.roadmap {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(230px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.roadmap-round {
+  min-width: 230px;
+}
+
+.roadmap-round h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: var(--green-dark);
+}
+
+.roadmap-match-list {
+  display: grid;
+  gap: 10px;
+}
+
+.roadmap-match {
+  padding: 12px;
+  background: linear-gradient(180deg, #fff, #fbfcfa);
+}
+
+.roadmap-teams {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.roadmap-teams > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.winner-team {
+  color: var(--green-dark);
+  font-weight: 800;
+}
+
 .match-board-panel {
   margin-top: 0;
 }
@@ -792,7 +927,13 @@ button {
   }
 
   .form-grid,
-  .admin-match {
+  .admin-match,
+  .fixture-card-body {
     grid-template-columns: 1fr;
+  }
+
+  .fixture-status {
+    justify-items: start;
+    text-align: left;
   }
 }
