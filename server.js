@@ -46,6 +46,28 @@ const publicPaths = new Set(["/", "/index.html", "/admin.html", "/styles.css", "
 const finalSportsStatuses = new Set(["FT", "AET", "PEN", "FINISHED"]);
 const sportsSyncMinutes = Math.max(1, Number(process.env.FOOTBALL_DATA_SYNC_MINUTES || 15));
 const autoSyncEnabled = process.env.FOOTBALL_DATA_AUTO_SYNC === "true";
+
+function footballDataConfig() {
+  const keySource = process.env.FOOTBALL_DATA_API_KEY
+    ? "FOOTBALL_DATA_API_KEY"
+    : process.env.SPORTS_API_KEY
+      ? "SPORTS_API_KEY"
+      : process.env.FOOTBALL_DATA_TOKEN
+        ? "FOOTBALL_DATA_TOKEN"
+        : null;
+  return {
+    provider: "football-data.org",
+    hasKey: Boolean(keySource),
+    keySource,
+    baseUrl: process.env.FOOTBALL_DATA_BASE_URL || "https://api.football-data.org/v4",
+    competition: process.env.FOOTBALL_DATA_COMPETITION || "WC",
+    season: process.env.FOOTBALL_DATA_SEASON || "2026",
+    syncMode: process.env.FOOTBALL_DATA_SYNC_MODE || "auto",
+    autoSync: autoSyncEnabled,
+    syncMinutes: sportsSyncMinutes,
+  };
+}
+
 let syncInProgress = false;
 let lastSyncStatus = {
   enabled: false,
@@ -58,6 +80,7 @@ let lastSyncStatus = {
   sourceMatches: 0,
   skippedWithoutScore: 0,
   unmatchedSamples: [],
+  config: footballDataConfig(),
   message: "football-data.org sync has not run yet.",
   error: null,
 };
@@ -461,12 +484,13 @@ async function appState(user = null) {
 }
 
 async function syncSportsResults() {
+  const config = footballDataConfig();
   const footballDataKey = process.env.FOOTBALL_DATA_API_KEY || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_TOKEN;
-  const footballDataBaseUrl = process.env.FOOTBALL_DATA_BASE_URL || "https://api.football-data.org/v4";
-  const footballDataCompetition = process.env.FOOTBALL_DATA_COMPETITION || "WC";
-  const footballDataSeason = process.env.FOOTBALL_DATA_SEASON || "2026";
+  const footballDataBaseUrl = config.baseUrl;
+  const footballDataCompetition = config.competition;
+  const footballDataSeason = config.season;
   const dateWindowDays = Math.max(1, Number(process.env.FOOTBALL_DATA_DATE_WINDOW_DAYS || 3));
-  const syncMode = process.env.FOOTBALL_DATA_SYNC_MODE || "auto";
+  const syncMode = config.syncMode;
   const competitionMatchesUrl = `${footballDataBaseUrl}/competitions/${encodeURIComponent(footballDataCompetition)}/matches`;
   const apiUrl = process.env.SPORTS_API_URL || (footballDataKey
     ? `${competitionMatchesUrl}?season=${encodeURIComponent(footballDataSeason)}`
@@ -484,6 +508,7 @@ async function syncSportsResults() {
       enabled: false,
       running: false,
       lastRunAt: new Date().toISOString(),
+      config,
       updated: 0,
       unmatched: 0,
       message: result.message,
@@ -597,6 +622,7 @@ async function syncSportsResults() {
     unmatchedSamples,
     apiErrors: apiResult.errors,
     apiSource: apiResult.url.replace(footballDataBaseUrl, ""),
+    config,
     message: `football-data.org sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}${apiResult.errors ? `; API reported ${JSON.stringify(apiResult.errors)}` : ""}.`,
   };
   lastSyncStatus = {
@@ -612,6 +638,7 @@ async function syncSportsResults() {
     unmatchedSamples,
     apiErrors: apiResult.errors,
     apiSource: result.apiSource,
+    config,
     message: result.message,
     error: null,
   };
@@ -619,12 +646,14 @@ async function syncSportsResults() {
 }
 
 async function runScheduledSync(reason = "scheduled") {
+  const config = footballDataConfig();
   const footballDataKey = process.env.FOOTBALL_DATA_API_KEY || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_TOKEN;
   if (!autoSyncEnabled || !footballDataKey) {
     lastSyncStatus = {
       ...lastSyncStatus,
       enabled: Boolean(footballDataKey),
       running: false,
+      config,
       message: footballDataKey
         ? "Automatic football-data.org sync is disabled."
         : "Automatic football-data.org sync is waiting for FOOTBALL_DATA_API_KEY.",
@@ -639,6 +668,7 @@ async function runScheduledSync(reason = "scheduled") {
     enabled: true,
     running: true,
     lastRunAt: new Date().toISOString(),
+    config,
     message: `football-data.org ${reason} sync running.`,
     error: null,
   };
@@ -651,6 +681,7 @@ async function runScheduledSync(reason = "scheduled") {
       enabled: true,
       running: false,
       lastErrorAt: new Date().toISOString(),
+      config,
       message: `football-data.org ${reason} sync could not complete.`,
       error: error.message,
     };
@@ -664,10 +695,12 @@ async function runScheduledSync(reason = "scheduled") {
 }
 
 function startSportsAutoSync() {
+  const config = footballDataConfig();
   const footballDataKey = process.env.FOOTBALL_DATA_API_KEY || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_TOKEN;
   lastSyncStatus = {
     ...lastSyncStatus,
     enabled: Boolean(footballDataKey) && autoSyncEnabled,
+    config,
     message: !footballDataKey
       ? "Automatic football-data.org sync is waiting for FOOTBALL_DATA_API_KEY."
       : autoSyncEnabled
@@ -987,9 +1020,12 @@ initDb().then(() => {
   http.createServer((request, response) => {
     router(request, response).catch((error) => sendJson(response, 500, { ok: false, error: error.message }));
   }).listen(port, "0.0.0.0", () => {
+    const config = footballDataConfig();
     console.log(`World Cup bet tracker running at http://0.0.0.0:${port}`);
     console.log("Default admin: admin / admin123");
-    console.log(process.env.FOOTBALL_DATA_API_KEY ? "football-data.org key loaded from environment." : "football-data.org key not set. Add FOOTBALL_DATA_API_KEY to .env for local score sync.");
+    console.log(config.hasKey
+      ? `football-data.org key loaded from ${config.keySource}; competition=${config.competition}; season=${config.season}; autoSync=${config.autoSync}.`
+      : "football-data.org key not set. Add FOOTBALL_DATA_API_KEY to the Railway service variables.");
     startSportsAutoSync();
   });
 }).catch((error) => {

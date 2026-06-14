@@ -120,6 +120,8 @@ The sync updates live/current scores, stores API match status, and only sets the
 
 When `FOOTBALL_DATA_AUTO_SYNC=true` is set, the server automatically syncs scores every `FOOTBALL_DATA_SYNC_MINUTES` minutes. Leave auto-sync off until `/api/sync-status` or the Command Center manual sync confirms your football-data.org plan can access the configured competition.
 
+Railway variables are read at runtime by `server.js`, not during Docker build. After changing `FOOTBALL_DATA_API_KEY`, redeploy or restart the Railway service and confirm `/api/sync-status` shows `"hasKey": true` under `config`.
+
 Check sync status at:
 
 ```text
