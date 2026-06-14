@@ -29,7 +29,10 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
-if (process.env.API_FOOTBALL_ALLOW_INSECURE_TLS === "true" && process.env.NODE_ENV !== "production") {
+if (
+  process.env.FOOTBALL_DATA_ALLOW_INSECURE_TLS === "true"
+  && process.env.NODE_ENV !== "production"
+) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 }
 
@@ -38,9 +41,9 @@ const dbPath = process.env.SQLITE_DB_PATH || path.join(rootDir, "data", "tracker
 const sqliteCommand = process.env.SQLITE3_PATH || "sqlite3";
 const sessionCookie = "wc_session";
 const publicPaths = new Set(["/", "/index.html", "/admin.html", "/styles.css", "/app.js", "/admin.js", "/data/fixtures.js"]);
-const finalApiFootballStatuses = new Set(["FT", "AET", "PEN"]);
-const apiFootballSyncMinutes = Math.max(1, Number(process.env.API_FOOTBALL_SYNC_MINUTES || 15));
-const autoSyncEnabled = process.env.API_FOOTBALL_AUTO_SYNC !== "false";
+const finalSportsStatuses = new Set(["FT", "AET", "PEN", "FINISHED"]);
+const sportsSyncMinutes = Math.max(1, Number(process.env.FOOTBALL_DATA_SYNC_MINUTES || 15));
+const autoSyncEnabled = process.env.FOOTBALL_DATA_AUTO_SYNC !== "false";
 let syncInProgress = false;
 let lastSyncStatus = {
   enabled: false,
@@ -53,7 +56,7 @@ let lastSyncStatus = {
   sourceMatches: 0,
   skippedWithoutScore: 0,
   unmatchedSamples: [],
-  message: "API-Football sync has not run yet.",
+  message: "football-data.org sync has not run yet.",
   error: null,
 };
 const initialPlayers = [
@@ -426,22 +429,22 @@ async function appState(user = null) {
 }
 
 async function syncSportsResults() {
-  const apiFootballKey = process.env.API_FOOTBALL_KEY;
-  const apiFootballLeague = process.env.API_FOOTBALL_LEAGUE || "1";
-  const apiFootballSeason = process.env.API_FOOTBALL_SEASON || "2026";
-  const apiFootballBaseUrl = process.env.API_FOOTBALL_BASE_URL || "https://v3.football.api-sports.io";
-  const apiFootballSyncMode = process.env.API_FOOTBALL_SYNC_MODE || "auto";
-  const dateWindowDays = Math.max(1, Number(process.env.API_FOOTBALL_DATE_WINDOW_DAYS || 3));
-  const apiUrl = process.env.SPORTS_API_URL || (apiFootballKey
-    ? `${apiFootballBaseUrl}/fixtures?league=${encodeURIComponent(apiFootballLeague)}&season=${encodeURIComponent(apiFootballSeason)}`
+  const footballDataKey = process.env.FOOTBALL_DATA_API_KEY || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_TOKEN;
+  const footballDataBaseUrl = process.env.FOOTBALL_DATA_BASE_URL || "https://api.football-data.org/v4";
+  const footballDataCompetition = process.env.FOOTBALL_DATA_COMPETITION || "WC";
+  const footballDataSeason = process.env.FOOTBALL_DATA_SEASON || "2026";
+  const dateWindowDays = Math.max(1, Number(process.env.FOOTBALL_DATA_DATE_WINDOW_DAYS || 3));
+  const syncMode = process.env.FOOTBALL_DATA_SYNC_MODE || "competition";
+  const apiUrl = process.env.SPORTS_API_URL || (footballDataKey
+    ? `${footballDataBaseUrl}/competitions/${encodeURIComponent(footballDataCompetition)}/matches?season=${encodeURIComponent(footballDataSeason)}`
     : "");
-  const apiKey = apiFootballKey || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_API_KEY;
+  const apiKey = footballDataKey;
 
   if (!apiUrl) {
     const result = {
       updated: 0,
       unmatched: 0,
-      message: "Set API_FOOTBALL_KEY to enable API-Football sync. Optional: API_FOOTBALL_LEAGUE=1 and API_FOOTBALL_SEASON=2026.",
+      message: "Set FOOTBALL_DATA_API_KEY to enable football-data.org sync. Optional: FOOTBALL_DATA_COMPETITION=WC and FOOTBALL_DATA_SEASON=2026.",
     };
     lastSyncStatus = {
       ...lastSyncStatus,
@@ -457,19 +460,13 @@ async function syncSportsResults() {
   }
 
   const headers = {};
-  if (apiFootballKey) headers["x-apisports-key"] = apiFootballKey;
-  else if (apiKey) {
-    headers["X-Auth-Token"] = apiKey;
-    headers["x-apisports-key"] = apiKey;
-  }
+  if (apiKey) headers["X-Auth-Token"] = apiKey;
 
   async function fetchApiJson(url) {
     const response = await fetch(url, { headers });
-    if (!response.ok) throw new Error(`Sports API failed: ${response.status}`);
+    if (!response.ok) throw new Error(`football-data.org API failed: ${response.status}`);
     const payload = await response.json();
-    const apiErrors = payload.errors && (Array.isArray(payload.errors) ? payload.errors.length : Object.keys(payload.errors).length)
-      ? payload.errors
-      : null;
+    const apiErrors = response.ok ? null : payload;
     return {
       rows: payload.matches || payload.response || payload.events || [],
       errors: apiErrors,
@@ -485,35 +482,18 @@ async function syncSportsResults() {
     const today = new Date();
     const before = Math.floor((dateWindowDays - 1) / 2);
     const after = dateWindowDays - before - 1;
-    const requests = [];
-    for (let offset = -before; offset <= after; offset += 1) {
-      const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + offset));
-      requests.push(`${apiFootballBaseUrl}/fixtures?date=${dateOnly(date)}`);
-    }
-
-    const rows = [];
-    const errors = [];
-    for (const url of requests) {
-      const result = await fetchApiJson(url);
-      if (result.errors) errors.push(result.errors);
-      rows.push(...result.rows.filter((item) =>
-        Number(item.league?.id) === Number(apiFootballLeague)
-        || (String(item.league?.name || "").toLowerCase() === "world cup" && Number(item.league?.season) === Number(apiFootballSeason))
-      ));
-    }
-    return {
-      rows,
-      errors: errors.length ? errors : null,
-      url: `${apiFootballBaseUrl}/fixtures?date=<${dateWindowDays}-day-window>`,
-    };
+    const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - before));
+    const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + after + 1));
+    const separator = apiUrl.includes("?") ? "&" : "?";
+    return fetchApiJson(`${apiUrl}${separator}dateFrom=${dateOnly(start)}&dateTo=${dateOnly(end)}`);
   }
 
   let apiResult;
-  if (apiFootballSyncMode === "date-window") {
+  if (syncMode === "date-window") {
     apiResult = await fetchDateWindowMatches();
   } else {
     apiResult = await fetchApiJson(apiUrl);
-    if (apiFootballSyncMode === "auto" && apiResult.errors && apiFootballKey) {
+    if (syncMode === "auto" && apiResult.errors) {
       apiResult = await fetchDateWindowMatches();
     }
   }
@@ -530,10 +510,10 @@ async function syncSportsResults() {
   const unmatchedSamples = [];
 
   for (const item of sourceMatches) {
-    const home = item.homeTeam?.name || item.teams?.home?.name || item.strHomeTeam;
-    const away = item.awayTeam?.name || item.teams?.away?.name || item.strAwayTeam;
-    const homeScore = item.score?.fullTime?.home ?? item.goals?.home ?? item.intHomeScore;
-    const awayScore = item.score?.fullTime?.away ?? item.goals?.away ?? item.intAwayScore;
+    const home = item.homeTeam?.name || item.homeTeam?.shortName || item.teams?.home?.name || item.strHomeTeam;
+    const away = item.awayTeam?.name || item.awayTeam?.shortName || item.teams?.away?.name || item.strAwayTeam;
+    const homeScore = item.score?.fullTime?.home ?? item.score?.regularTime?.home ?? item.goals?.home ?? item.intHomeScore;
+    const awayScore = item.score?.fullTime?.away ?? item.score?.regularTime?.away ?? item.goals?.away ?? item.intAwayScore;
     const status = item.status || item.fixture?.status?.short || item.fixture?.status?.long || "";
     if (!home || !away || homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) {
       skippedWithoutScore += 1;
@@ -552,9 +532,14 @@ async function syncSportsResults() {
     const reversed = normalizeTeamName(localMatch.team1) === normalAway;
     const team1Score = reversed ? Number(awayScore) : Number(homeScore);
     const team2Score = reversed ? Number(homeScore) : Number(awayScore);
-    const isFinal = finalApiFootballStatuses.has(String(status).toUpperCase());
+    const isFinal = finalSportsStatuses.has(String(status).toUpperCase());
+    const apiWinner = String(item.score?.winner || "").toUpperCase();
     const result = isFinal
-      ? team1Score > team2Score ? "Team 1" : team2Score > team1Score ? "Team 2" : "Draw"
+      ? apiWinner === "HOME_TEAM"
+        ? reversed ? "Team 2" : "Team 1"
+        : apiWinner === "AWAY_TEAM"
+          ? reversed ? "Team 1" : "Team 2"
+          : team1Score > team2Score ? "Team 1" : team2Score > team1Score ? "Team 2" : "Draw"
       : null;
 
     await runSql(`
@@ -575,8 +560,8 @@ async function syncSportsResults() {
     skippedWithoutScore,
     unmatchedSamples,
     apiErrors: apiResult.errors,
-    apiSource: apiResult.url.replace(apiFootballBaseUrl, ""),
-    message: `API-Football sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}${apiResult.errors ? `; API reported ${JSON.stringify(apiResult.errors)}` : ""}.`,
+    apiSource: apiResult.url.replace(footballDataBaseUrl, ""),
+    message: `football-data.org sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}${apiResult.errors ? `; API reported ${JSON.stringify(apiResult.errors)}` : ""}.`,
   };
   lastSyncStatus = {
     ...lastSyncStatus,
@@ -598,14 +583,15 @@ async function syncSportsResults() {
 }
 
 async function runScheduledSync(reason = "scheduled") {
-  if (!autoSyncEnabled || !process.env.API_FOOTBALL_KEY) {
+  const footballDataKey = process.env.FOOTBALL_DATA_API_KEY || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_TOKEN;
+  if (!autoSyncEnabled || !footballDataKey) {
     lastSyncStatus = {
       ...lastSyncStatus,
-      enabled: Boolean(process.env.API_FOOTBALL_KEY),
+      enabled: Boolean(footballDataKey),
       running: false,
-      message: process.env.API_FOOTBALL_KEY
-        ? "Automatic API-Football sync is disabled."
-        : "Automatic API-Football sync is waiting for API_FOOTBALL_KEY.",
+      message: footballDataKey
+        ? "Automatic football-data.org sync is disabled."
+        : "Automatic football-data.org sync is waiting for FOOTBALL_DATA_API_KEY.",
     };
     return lastSyncStatus;
   }
@@ -617,7 +603,7 @@ async function runScheduledSync(reason = "scheduled") {
     enabled: true,
     running: true,
     lastRunAt: new Date().toISOString(),
-    message: `API-Football ${reason} sync running.`,
+    message: `football-data.org ${reason} sync running.`,
     error: null,
   };
   try {
@@ -629,10 +615,10 @@ async function runScheduledSync(reason = "scheduled") {
       enabled: true,
       running: false,
       lastErrorAt: new Date().toISOString(),
-      message: "API-Football sync failed.",
+      message: "football-data.org sync failed.",
       error: error.message,
     };
-    console.error("API-Football sync failed:", error);
+    console.error("football-data.org sync failed:", error);
     return lastSyncStatus;
   } finally {
     syncInProgress = false;
@@ -640,18 +626,19 @@ async function runScheduledSync(reason = "scheduled") {
   }
 }
 
-function startApiFootballAutoSync() {
+function startSportsAutoSync() {
+  const footballDataKey = process.env.FOOTBALL_DATA_API_KEY || process.env.SPORTS_API_KEY || process.env.FOOTBALL_DATA_TOKEN;
   lastSyncStatus = {
     ...lastSyncStatus,
-    enabled: Boolean(process.env.API_FOOTBALL_KEY) && autoSyncEnabled,
-    message: process.env.API_FOOTBALL_KEY
-      ? `API-Football auto sync every ${apiFootballSyncMinutes} minutes.`
-      : "Automatic API-Football sync is waiting for API_FOOTBALL_KEY.",
+    enabled: Boolean(footballDataKey) && autoSyncEnabled,
+    message: footballDataKey
+      ? `football-data.org auto sync every ${sportsSyncMinutes} minutes.`
+      : "Automatic football-data.org sync is waiting for FOOTBALL_DATA_API_KEY.",
   };
-  if (!process.env.API_FOOTBALL_KEY || !autoSyncEnabled) return;
+  if (!footballDataKey || !autoSyncEnabled) return;
 
   setTimeout(() => runScheduledSync("startup"), 5000);
-  setInterval(() => runScheduledSync("scheduled"), apiFootballSyncMinutes * 60 * 1000);
+  setInterval(() => runScheduledSync("scheduled"), sportsSyncMinutes * 60 * 1000);
 }
 
 function serveStatic(request, response) {
@@ -916,8 +903,8 @@ initDb().then(() => {
   }).listen(port, () => {
     console.log(`World Cup bet tracker running at http://localhost:${port}`);
     console.log("Default admin: admin / admin123");
-    console.log(process.env.API_FOOTBALL_KEY ? "API-Football key loaded from environment." : "API-Football key not set. Add API_FOOTBALL_KEY to .env for local score sync.");
-    startApiFootballAutoSync();
+    console.log(process.env.FOOTBALL_DATA_API_KEY ? "football-data.org key loaded from environment." : "football-data.org key not set. Add FOOTBALL_DATA_API_KEY to .env for local score sync.");
+    startSportsAutoSync();
   });
 }).catch((error) => {
   console.error(error);

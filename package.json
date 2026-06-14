@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check app.js && node --check admin.js && node --check scripts/import-initial-players.js"
+    "check": "node --check server.js && node --check app.js && node --check admin.js && node --check scripts/import-initial-players.js && node --check scripts/probe-football-data.js"
   },
   "engines": {
     "node": ">=24"

@@ -1,10 +1,12 @@
 let app = { user: null, state: null };
+let loginDismissed = false;
 
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
   accountLabel: document.querySelector("#accountLabel"),
   logoutButton: document.querySelector("#logoutButton"),
   loginPanel: document.querySelector("#loginPanel"),
+  loginCloseButton: document.querySelector("#loginCloseButton"),
   loginForm: document.querySelector("#loginForm"),
   adminContent: document.querySelector("#adminContent"),
   commandTabs: [...document.querySelectorAll("[data-admin-view]")],
@@ -75,6 +77,12 @@ function setAdminView(view) {
   });
 }
 
+function closeLoginPanel() {
+  loginDismissed = true;
+  elements.loginPanel.hidden = true;
+  setStatus("Admin login dismissed");
+}
+
 function ledgerRows() {
   const balances = app.state.leaderboard
     .map((player) => ({
@@ -111,7 +119,7 @@ function ledgerRows() {
 function renderAccount() {
   const isAdmin = app.user?.role === "admin";
   elements.accountLabel.textContent = app.user ? `${app.user.display_name} (${app.user.role})` : "Not signed in";
-  elements.loginPanel.style.display = isAdmin ? "none" : "";
+  elements.loginPanel.hidden = isAdmin || loginDismissed;
   elements.adminContent.style.display = isAdmin ? "" : "none";
   elements.logoutButton.style.display = app.user ? "" : "none";
   setStatus(isAdmin ? "Admin connected" : "Admin login required");
@@ -235,13 +243,25 @@ elements.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(elements.loginForm));
   await api("/api/login", { method: "POST", body: JSON.stringify(data) });
+  loginDismissed = false;
   elements.loginForm.reset();
   await refresh();
 });
 
 elements.logoutButton.addEventListener("click", async () => {
   await api("/api/logout", { method: "POST", body: "{}" });
+  loginDismissed = false;
   await refresh();
+});
+
+elements.loginCloseButton.addEventListener("click", closeLoginPanel);
+
+elements.loginPanel.addEventListener("click", (event) => {
+  if (event.target === elements.loginPanel) closeLoginPanel();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !elements.loginPanel.hidden && app.user?.role !== "admin") closeLoginPanel();
 });
 
 elements.commandTabs.forEach((tab) => {
