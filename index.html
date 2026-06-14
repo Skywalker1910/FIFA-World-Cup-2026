@@ -18,17 +18,19 @@
         </div>
 
         <nav class="nav-tabs" aria-label="App views">
-          <button class="nav-tab active" data-view="dashboard" type="button">Dashboard</button>
-          <button class="nav-tab" data-view="fixtures" type="button">Bets</button>
-          <button class="nav-tab" data-view="tournament" type="button">Tournament</button>
-          <button class="nav-tab" data-view="players" type="button">Profiles</button>
+          <button class="nav-tab active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i>Dashboard</button>
+          <button class="nav-tab" data-view="fixtures" type="button"><i data-lucide="ticket-check"></i>Bets</button>
+          <button class="nav-tab" data-view="tournament" type="button"><i data-lucide="calendar-days"></i>Tournament</button>
+          <button class="nav-tab" data-view="groups" type="button"><i data-lucide="table-2"></i>Groups</button>
+          <button class="nav-tab" data-view="roadmap" type="button"><i data-lucide="git-merge"></i>Road To Final</button>
+          <button class="nav-tab" data-view="players" type="button"><i data-lucide="users-round"></i>Players</button>
         </nav>
 
         <section class="settings-panel" aria-labelledby="settings-title">
           <h2 id="settings-title">Account</h2>
           <p id="accountLabel">Not signed in</p>
           <div class="button-stack">
-            <button id="logoutButton" class="secondary-button" type="button">Logout</button>
+            <button id="logoutButton" class="secondary-button" type="button"><i data-lucide="log-out"></i>Logout</button>
           </div>
         </section>
       </aside>
@@ -40,13 +42,13 @@
             <h2 id="viewTitle">Dashboard</h2>
           </div>
           <div class="topbar-actions">
-            <button id="loginToggleButton" class="secondary-light-button" type="button">Login</button>
+            <button id="loginToggleButton" class="secondary-light-button" type="button"><i data-lucide="log-in"></i>Login</button>
             <div class="status-pill" id="saveStatus">Connecting</div>
           </div>
         </section>
 
         <section class="view active" id="dashboardView">
-          <section class="login-panel panel" id="loginPanel">
+          <section class="login-panel panel login-panel-floating" id="loginPanel" hidden>
             <div class="panel-heading">
               <h3>Login</h3>
               <span>Admin creates accounts</span>
@@ -54,7 +56,7 @@
             <form id="loginForm" class="form-grid">
               <input name="loginId" placeholder="Login ID" autocomplete="username" required>
               <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
-              <button class="primary-button" type="submit">Sign in</button>
+              <button class="primary-button" type="submit"><i data-lucide="arrow-right"></i>Sign in</button>
             </form>
           </section>
           <div class="metric-grid" id="metrics"></div>
@@ -64,6 +66,7 @@
               <span id="liveScoresLabel"></span>
             </div>
             <div class="live-score-grid" id="liveScores"></div>
+            <div class="live-ticker" id="liveTicker" aria-label="Live score ticker"></div>
           </section>
           <section class="panel upcoming-panel">
             <div class="panel-heading">
@@ -118,9 +121,8 @@
                   <th>Teams</th>
                   <th>Scores</th>
                   <th>Result</th>
-                  <th>M</th>
-                  <th>S</th>
-                  <th>A</th>
+                  <th>Status</th>
+                  <th>Bets</th>
                   <th>Pool</th>
                   <th>Rollover</th>
                 </tr>
@@ -131,6 +133,13 @@
         </section>
 
         <section class="view" id="playersView">
+          <section class="panel players-leaderboard-panel">
+            <div class="panel-heading">
+              <h3>Leaderboard</h3>
+              <span>Current player rankings</span>
+            </div>
+            <div class="players-leaderboard" id="playersLeaderboard"></div>
+          </section>
           <div class="player-grid" id="playerCards"></div>
         </section>
 
@@ -142,7 +151,9 @@
             </div>
             <div class="tournament-fixture-list" id="allFixtures"></div>
           </section>
+        </section>
 
+        <section class="view" id="groupsView">
           <section class="panel tournament-panel">
             <div class="panel-heading">
               <h3>Group Tables</h3>
@@ -150,7 +161,9 @@
             </div>
             <div class="group-table-grid" id="groupTables"></div>
           </section>
+        </section>
 
+        <section class="view" id="roadmapView">
           <section class="panel tournament-panel">
             <div class="panel-heading">
               <h3>Road To The Final</h3>
@@ -164,5 +177,7 @@
 
     <script src="data/fixtures.js"></script>
     <script src="app.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>window.lucide && window.lucide.createIcons();</script>
   </body>
 </html>

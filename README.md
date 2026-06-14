@@ -4,6 +4,24 @@ SQLite-backed local web app for World Cup betting, admin-created player logins, 
 
 ## Run
 
+For local API testing, copy the example env file first:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then edit `.env` and set:
+
+```text
+API_FOOTBALL_KEY=your-real-api-football-key
+API_FOOTBALL_LEAGUE=1
+API_FOOTBALL_SEASON=2026
+API_FOOTBALL_SYNC_MODE=auto
+API_FOOTBALL_DATE_WINDOW_DAYS=3
+```
+
+The `.env` file is ignored by git, so local API keys are not committed.
+
 ```powershell
 node server.js
 ```
@@ -88,13 +106,12 @@ The app writes bets, results, settings, users, and sessions to SQLite.
 
 ## API-Football Sync
 
-The app is wired for API-Football by default. Create a free API-Football account, copy your API key, then run:
+The app is wired for API-Football by default. Create a free API-Football account, copy your API key, and put it in `.env`:
 
-```powershell
-$env:API_FOOTBALL_KEY="your-api-football-key"
-$env:API_FOOTBALL_LEAGUE="1"
-$env:API_FOOTBALL_SEASON="2026"
-node server.js
+```text
+API_FOOTBALL_KEY=your-api-football-key
+API_FOOTBALL_LEAGUE=1
+API_FOOTBALL_SEASON=2026
 ```
 
 The `/admin` page has a `Sync API-Football Results` button. The default league ID is `1`, which API-Football commonly uses for the FIFA World Cup, but verify the league ID in your API-Football dashboard before tournament use.
@@ -109,12 +126,27 @@ Check sync status at:
 /api/sync-status
 ```
 
+If scores are not loading locally:
+
+1. Confirm `.env` has a real value after the equals sign:
+
+```text
+API_FOOTBALL_KEY=your-real-api-football-key
+```
+
+2. Restart `node server.js` after editing `.env`. The server reads `.env` only at startup.
+3. Make sure the browser is hitting this app. If `http://localhost:3000/api/sync-status` returns `404`, an older process is using port `3000`; stop it or set `PORT=3001` in `.env`.
+4. If `/api/sync-status` says `sourceMatches: 0`, check `apiErrors`. Free API-Football plans may reject `league=1&season=2026`; the app falls back to a date-window query in `API_FOOTBALL_SYNC_MODE=auto`.
+5. If Node reports `UNABLE_TO_VERIFY_LEAF_SIGNATURE` locally, set `API_FOOTBALL_ALLOW_INSECURE_TLS=true` in `.env` for local testing only. Do not use that setting in Railway/production.
+
 Optional overrides:
 
-```powershell
-$env:API_FOOTBALL_BASE_URL="https://v3.football.api-sports.io"
-$env:SPORTS_API_URL="custom-fixtures-url"
-$env:API_FOOTBALL_AUTO_SYNC="false"
+```text
+API_FOOTBALL_BASE_URL=https://v3.football.api-sports.io
+SPORTS_API_URL=custom-fixtures-url
+API_FOOTBALL_AUTO_SYNC=false
+API_FOOTBALL_SYNC_MODE=date-window
+API_FOOTBALL_DATE_WINDOW_DAYS=3
 ```
 
 ## Team Flags

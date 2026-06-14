@@ -17,14 +17,14 @@
           </div>
         </div>
         <nav class="nav-tabs" aria-label="Admin navigation">
-          <a class="nav-tab active" href="/admin">Admin</a>
-          <a class="nav-tab" href="/">Public App</a>
+          <a class="nav-tab active" href="/admin"><i data-lucide="shield-check"></i>Admin</a>
+          <a class="nav-tab" href="/"><i data-lucide="globe-2"></i>Public App</a>
         </nav>
         <section class="settings-panel">
           <h2>Account</h2>
           <p id="accountLabel">Not signed in</p>
           <div class="button-stack">
-            <button id="logoutButton" class="secondary-button" type="button">Logout</button>
+            <button id="logoutButton" class="secondary-button" type="button"><i data-lucide="log-out"></i>Logout</button>
           </div>
         </section>
       </aside>
@@ -46,7 +46,7 @@
           <form id="loginForm" class="form-grid">
             <input name="loginId" placeholder="Login ID" autocomplete="username" required>
             <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
-            <button class="primary-button" type="submit">Sign in</button>
+            <button class="primary-button" type="submit"><i data-lucide="arrow-right"></i>Sign in</button>
           </form>
         </section>
 
@@ -64,7 +64,7 @@
                 <option value="player">Player</option>
                 <option value="admin">Admin</option>
               </select>
-              <button class="primary-button" type="submit">Create user</button>
+              <button class="primary-button" type="submit"><i data-lucide="user-plus"></i>Create user</button>
             </form>
             <div class="compact-list" id="adminUsers"></div>
           </section>
@@ -77,9 +77,9 @@
             <form id="settingsForm" class="form-grid">
               <input name="stake" type="number" min="0" step="0.25" placeholder="Stake">
               <input name="lockMinutes" type="number" min="0" step="1" placeholder="Lock minutes">
-              <button class="primary-button" type="submit">Save settings</button>
+              <button class="primary-button" type="submit"><i data-lucide="save"></i>Save settings</button>
             </form>
-            <button id="syncResultsButton" class="secondary-light-button" type="button">Sync API-Football Results</button>
+            <button id="syncResultsButton" class="secondary-light-button" type="button"><i data-lucide="refresh-cw"></i>Sync API-Football Results</button>
             <div class="compact-list" id="adminMatches"></div>
           </section>
         </section>
@@ -87,5 +87,7 @@
     </div>
 
     <script src="/admin.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>window.lucide && window.lucide.createIcons();</script>
   </body>
 </html>

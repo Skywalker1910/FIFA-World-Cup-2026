@@ -14,6 +14,7 @@ const TEAM_FLAGS = {
 };
 
 let app = { user: null, state: null };
+let loginPanelOpen = false;
 const refreshIntervalMs = 60 * 1000;
 
 const elements = {
@@ -25,12 +26,14 @@ const elements = {
   loginForm: document.querySelector("#loginForm"),
   metrics: document.querySelector("#metrics"),
   leaderboard: document.querySelector("#leaderboard"),
+  playersLeaderboard: document.querySelector("#playersLeaderboard"),
   leaderLabel: document.querySelector("#leaderLabel"),
   recentSettlements: document.querySelector("#recentSettlements"),
   settlementCount: document.querySelector("#settlementCount"),
   matchBoard: document.querySelector("#matchBoard"),
   matchBoardLabel: document.querySelector("#matchBoardLabel"),
   liveScores: document.querySelector("#liveScores"),
+  liveTicker: document.querySelector("#liveTicker"),
   liveScoresLabel: document.querySelector("#liveScoresLabel"),
   upcomingMatches: document.querySelector("#upcomingMatches"),
   upcomingLabel: document.querySelector("#upcomingLabel"),
@@ -55,6 +58,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function icon(name) {
+  return `<i class="inline-icon" data-lucide="${escapeHtml(name)}"></i>`;
 }
 
 async function api(path, options = {}) {
@@ -130,12 +137,64 @@ function scoreText(fixture) {
   return hasScore(fixture) ? `${fixture.team1Score} - ${fixture.team2Score}` : "-";
 }
 
+function countdownText(fixture) {
+  const start = matchStartTime(fixture);
+  if (!Number.isFinite(start)) return "Schedule TBD";
+  const diff = start - Date.now();
+  if (fixture.result || isFinalFixture(fixture)) return "Final";
+  if (diff <= 0) return hasScore(fixture) ? "Live now" : "In progress";
+  const totalMinutes = Math.ceil(diff / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `Starts in ${days}d ${hours}h`;
+  if (hours > 0) return `Starts in ${hours}h ${minutes}m`;
+  return `Starts in ${minutes}m`;
+}
+
+function fixtureStatusLabel(fixture) {
+  if (fixture.result || isFinalFixture(fixture)) return "Final";
+  if (fixture.locked) return "Locked";
+  if (hasScore(fixture)) return fixture.status || "Live";
+  return "Open";
+}
+
+function matchMetaChips(fixture) {
+  const chips = [
+    fixture.group ? `Group ${fixture.group}` : fixture.stage,
+    fixtureStatusLabel(fixture),
+    countdownText(fixture),
+  ].filter(Boolean);
+  return `<div class="match-chip-row">${chips.map((chip) => `<span class="match-chip">${escapeHtml(chip)}</span>`).join("")}</div>`;
+}
+
 function resolvedResult(fixture) {
   if (fixture.result) return fixture.result;
   if (!hasScore(fixture)) return "";
   if (Number(fixture.team1Score) > Number(fixture.team2Score)) return "Team 1";
   if (Number(fixture.team2Score) > Number(fixture.team1Score)) return "Team 2";
   return "Draw";
+}
+
+function fixtureById(id) {
+  return app.state?.fixtures.find((fixture) => Number(fixture.id) === Number(id));
+}
+
+function fixtureTeamByOutcome(id, outcome) {
+  const fixture = fixtureById(id);
+  if (!fixture || !isFinalFixture(fixture)) return "";
+  const result = resolvedResult(fixture);
+  if (result === "Draw") return "";
+  if (outcome === "winner") return result === "Team 1" ? fixture.team1 : fixture.team2;
+  return result === "Team 1" ? fixture.team2 : fixture.team1;
+}
+
+function displayTeamName(team) {
+  const winnerMatch = String(team || "").match(/^Winner Match (\d+)$/i);
+  if (winnerMatch) return fixtureTeamByOutcome(winnerMatch[1], "winner") || team;
+  const loserMatch = String(team || "").match(/^Loser Match (\d+)$/i);
+  if (loserMatch) return fixtureTeamByOutcome(loserMatch[1], "loser") || team;
+  return team;
 }
 
 function isFinalFixture(fixture) {
@@ -150,22 +209,29 @@ function optionList(selected, labels = PICK_OPTIONS) {
 function renderAccount() {
   const user = app.user;
   elements.accountLabel.textContent = user ? `${user.display_name} (${user.role})` : "Not signed in";
-  elements.loginPanel.style.display = user ? "none" : "";
+  elements.loginPanel.hidden = Boolean(user) || !loginPanelOpen;
   elements.logoutButton.style.display = user ? "" : "none";
-  elements.loginToggleButton.textContent = user ? user.display_name : "Login";
+  elements.loginToggleButton.innerHTML = `<i data-lucide="${user ? "user-round" : "log-in"}"></i>${escapeHtml(user ? user.display_name : "Login")}`;
+  window.lucide?.createIcons();
 }
 
 function renderMetrics() {
   const fixtures = app.state.fixtures;
   const rows = fixtures.map(settlement);
   const metrics = [
-    ["Matches", fixtures.length],
-    ["Settled", rows.filter((row) => row.settled).length],
-    ["Total Pool", money(rows.reduce((sum, row) => sum + row.pool, 0))],
-    ["Rollover", money(rows.reduce((sum, row) => sum + row.rollover, 0))],
-    ["Players", app.state.players.length],
+    ["trophy", "Matches", fixtures.length],
+    ["badge-check", "Settled", rows.filter((row) => row.settled).length],
+    ["coins", "Total Pool", money(rows.reduce((sum, row) => sum + row.pool, 0))],
+    ["refresh-ccw", "Rollover", money(rows.reduce((sum, row) => sum + row.rollover, 0))],
+    ["users-round", "Players", app.state.players.length],
   ];
-  elements.metrics.innerHTML = metrics.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join("");
+  elements.metrics.innerHTML = metrics.map(([icon, label, value]) => `
+    <div class="metric">
+      <span class="metric-label"><i data-lucide="${icon}"></i>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join("");
+  window.lucide?.createIcons();
 }
 
 function renderLeaderboard() {
@@ -177,11 +243,16 @@ function renderLeaderboard() {
       <div class="rank">${index + 1}</div>
       <div>
         <strong>${escapeHtml(row.display_name)}</strong>
-        <div class="fixture-subtext">${row.correct}/${row.settled} correct, ${row.bets_entered} bets</div>
+        <div class="fixture-subtext stat-line">
+          <span>${icon("medal")}Rank #${index + 1}</span>
+          <span>${icon("target")} ${row.settled ? Math.round((row.correct / row.settled) * 100) : 0}% accuracy</span>
+          <span>${icon("flame")} ${row.correct} correct</span>
+        </div>
       </div>
       <strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${money(row.net)}</strong>
     </div>
   `).join("") : `<div class="empty-state">No player accounts yet.</div>`;
+  window.lucide?.createIcons();
 }
 
 function renderRecentSettlements() {
@@ -206,8 +277,9 @@ function renderMatchBoard() {
   elements.matchBoard.innerHTML = matches.map((fixture) => `
     <article class="match-card">
       <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
+      ${matchMetaChips(fixture)}
       <div class="match-card-teams">${teamBadge(fixture.team1)}<span class="versus">vs</span>${teamBadge(fixture.team2)}</div>
-      <div class="match-card-footer"><span>${fixture.locked ? "Locked" : fixture.kickoff || "TBD"}</span><strong>${hasScore(fixture) ? scoreText(fixture) : fixture.result ? resultLabel(fixture, fixture.result) : money(settlement(fixture).pool)}</strong></div>
+      <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${hasScore(fixture) ? scoreText(fixture) : fixture.result ? resultLabel(fixture, fixture.result) : money(settlement(fixture).pool)}</strong></div>
     </article>
   `).join("");
 }
@@ -231,11 +303,23 @@ function renderLiveScores() {
   elements.liveScores.innerHTML = rows.length ? rows.map((fixture) => `
     <article class="live-score-card">
       <div class="match-card-meta"><span>#${fixture.id}</span><span>${escapeHtml(fixture.status || (matches.length ? "Live" : "Final"))}</span></div>
+      ${matchMetaChips(fixture)}
       <div class="score-line">${teamBadge(fixture.team1)}<strong>${fixture.team1Score ?? "-"}</strong></div>
       <div class="score-line">${teamBadge(fixture.team2)}<strong>${fixture.team2Score ?? "-"}</strong></div>
       <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(fixture.status || "In progress")}</strong></div>
     </article>
   `).join("") : `<div class="empty-state">No synced scores yet.</div>`;
+  elements.liveTicker.innerHTML = rows.length ? `
+    <div class="ticker-track">
+      ${[...rows, ...rows].map((fixture) => `
+        <span class="ticker-item">
+          <strong>#${fixture.id}</strong>
+          ${escapeHtml(fixture.team1)} ${fixture.team1Score ?? "-"} — ${fixture.team2Score ?? "-"} ${escapeHtml(fixture.team2)}
+          <em>${escapeHtml(fixtureStatusLabel(fixture))}</em>
+        </span>
+      `).join("")}
+    </div>
+  ` : "";
 }
 
 function renderUpcomingMatches() {
@@ -248,8 +332,9 @@ function renderUpcomingMatches() {
   elements.upcomingMatches.innerHTML = rows.length ? rows.map((fixture) => `
     <article class="match-card">
       <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
+      ${matchMetaChips(fixture)}
       <div class="match-card-teams">${teamBadge(fixture.team1)}<span class="versus">vs</span>${teamBadge(fixture.team2)}</div>
-      <div class="match-card-footer"><span>${escapeHtml(fixture.venue || "")}</span><strong>${escapeHtml(fixture.kickoff || "TBD")}</strong></div>
+      <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${escapeHtml(fixture.kickoff || "TBD")}</strong></div>
     </article>
   `).join("") : `<div class="empty-state">No upcoming open matches.</div>`;
 }
@@ -287,14 +372,17 @@ function renderFixtures() {
   elements.fixturesTable.innerHTML = filteredFixtures().map((fixture) => {
     const row = settlement(fixture);
     const canBet = isPlayer && !fixture.locked && !fixture.result;
+    const betStatus = fixture.result || isFinalFixture(fixture) ? "Ended" : fixture.locked ? "Locked" : "Open";
+    const resultText = fixture.result ? resultLabel(fixture, fixture.result) : "---";
     return `
       <tr data-id="${fixture.id}">
         <td><strong>#${fixture.id}</strong><div class="fixture-subtext">${escapeHtml(fixture.stage || "")}${fixture.group ? ` / Group ${escapeHtml(fixture.group)}` : ""}</div></td>
         <td><strong>${dateLabel(fixture.date)}</strong><div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div></td>
         <td><div class="team-line">${teamBadge(fixture.team1)}</div><div class="team-line">${teamBadge(fixture.team2)}</div><div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div></td>
         <td><strong>${fixture.team1Score ?? "-"} - ${fixture.team2Score ?? "-"}</strong></td>
-        <td>${fixture.result ? resultLabel(fixture, fixture.result) : fixture.locked ? "Locked" : "Open"}</td>
-        <td colspan="3">
+        <td>${escapeHtml(resultText)}</td>
+        <td><span class="status-badge status-${betStatus.toLowerCase()}">${escapeHtml(betStatus)}</span></td>
+        <td>
           <select data-bet ${canBet ? "" : "disabled"}>${optionList(fixture.myPick)}</select>
           <div class="fixture-subtext">${canBet ? "Place or update your pick" : fixture.myPick ? `Your pick: ${resultLabel(fixture, fixture.myPick)}` : "Login as player before lock"}</div>
         </td>
@@ -302,13 +390,29 @@ function renderFixtures() {
         <td><strong>${money(row.rollover)}</strong></td>
       </tr>
     `;
-  }).join("") || `<tr><td colspan="10"><div class="empty-state">No matches match the current filters.</div></td></tr>`;
+  }).join("") || `<tr><td colspan="9"><div class="empty-state">No matches match the current filters.</div></td></tr>`;
 }
 
 function renderPlayers() {
+  const rows = app.state.leaderboard || [];
+  elements.playersLeaderboard.innerHTML = rows.length ? rows.map((row, index) => `
+    <div class="leader-row">
+      <div class="rank">${index + 1}</div>
+      <div>
+        <strong>${escapeHtml(row.display_name)}</strong>
+        <div class="fixture-subtext">${row.correct}/${row.settled} correct, ${row.bets_entered} bets entered</div>
+      </div>
+      <strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${money(row.net)}</strong>
+    </div>
+  `).join("") : `<div class="empty-state">No player rankings yet.</div>`;
   elements.playerCards.innerHTML = (app.state.leaderboard || []).map((row, index) => `
     <article class="player-card">
       <h3>${index + 1}. ${escapeHtml(row.display_name)}</h3>
+      <div class="player-badge-row">
+        <span class="player-badge">${icon("medal")}Rank #${index + 1}</span>
+        <span class="player-badge">${icon("target")}${row.settled ? Math.round((row.correct / row.settled) * 100) : 0}% Accuracy</span>
+        <span class="player-badge">${icon("flame")}${row.correct} Correct Picks</span>
+      </div>
       <div class="player-stat"><span>Net</span><strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${money(row.net)}</strong></div>
       <div class="player-stat"><span>Total payout</span><strong>${money(row.payout)}</strong></div>
       <div class="player-stat"><span>Correct picks</span><strong>${row.correct}</strong></div>
@@ -317,6 +421,7 @@ function renderPlayers() {
       <div class="player-stat"><span>ROI</span><strong>${Math.round(row.roi * 100)}%</strong></div>
     </article>
   `).join("") || `<div class="empty-state">No public player profiles yet.</div>`;
+  window.lucide?.createIcons();
 }
 
 function renderAllFixtures() {
@@ -438,17 +543,24 @@ function renderRoadmap() {
     .filter((round) => round.fixtures.length);
   elements.roadmapLabel.textContent = `${knockout.reduce((total, round) => total + round.fixtures.length, 0)} knockout matches`;
   elements.roadmap.innerHTML = knockout.map((round) => `
-    <section class="roadmap-round">
-      <h3>${escapeHtml(round.stage)}</h3>
-      <div class="roadmap-match-list">
+    <section class="bracket-round">
+      <div class="bracket-round-title">
+        <h3>${escapeHtml(round.stage)}</h3>
+        <span>${round.fixtures.length} matches</span>
+      </div>
+      <div class="bracket-match-list">
         ${round.fixtures.map((fixture) => `
-          <article class="roadmap-match">
+          <article class="bracket-match ${fixture.result ? "is-final" : ""}">
             <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
-            <div class="roadmap-teams">
-              <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(fixture.team1, { compact: true })}<strong>${fixture.team1Score ?? ""}</strong></div>
-              <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(fixture.team2, { compact: true })}<strong>${fixture.team2Score ?? ""}</strong></div>
+            <div class="bracket-teams">
+              <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.team1), { compact: true })}<strong>${fixture.team1Score ?? ""}</strong></div>
+              <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.team2), { compact: true })}<strong>${fixture.team2Score ?? ""}</strong></div>
             </div>
-            <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")} / ${escapeHtml(fixture.venue || "")}</div>
+            <div class="bracket-match-footer">
+              <span>${escapeHtml(fixture.kickoff || "")}</span>
+              <strong>${fixture.result ? `${escapeHtml(resultLabel(fixture, fixture.result))} advances` : hasScore(fixture) ? escapeHtml(fixture.status || "In progress") : "Pending"}</strong>
+            </div>
+            <div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div>
           </article>
         `).join("")}
       </div>
@@ -471,6 +583,7 @@ function renderAll() {
   renderAllFixtures();
   renderGroupTables();
   renderRoadmap();
+  window.lucide?.createIcons();
 }
 
 async function refresh() {
@@ -504,6 +617,7 @@ elements.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(elements.loginForm));
   await api("/api/login", { method: "POST", body: JSON.stringify(data) });
+  loginPanelOpen = false;
   elements.loginForm.reset();
   await refresh();
 });
@@ -515,7 +629,12 @@ elements.logoutButton.addEventListener("click", async () => {
 
 elements.loginToggleButton.addEventListener("click", () => {
   if (app.user) return;
-  elements.loginPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  loginPanelOpen = !loginPanelOpen;
+  renderAccount();
+  if (loginPanelOpen) {
+    elements.loginPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    elements.loginPanel.querySelector("input")?.focus({ preventScroll: true });
+  }
 });
 
 [elements.searchInput, elements.stageFilter, elements.groupFilter, elements.statusFilter].forEach((element) => {

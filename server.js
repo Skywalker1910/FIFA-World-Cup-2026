@@ -5,11 +5,39 @@ const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 
 const rootDir = __dirname;
+
+function loadLocalEnv() {
+  const envPath = path.join(rootDir, ".env");
+  if (!fs.existsSync(envPath)) return;
+
+  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator === -1) continue;
+
+    const key = trimmed.slice(0, separator).trim();
+    let value = trimmed.slice(separator + 1).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadLocalEnv();
+
+if (process.env.API_FOOTBALL_ALLOW_INSECURE_TLS === "true" && process.env.NODE_ENV !== "production") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
+
 const port = Number(process.env.PORT || 3000);
 const dbPath = process.env.SQLITE_DB_PATH || path.join(rootDir, "data", "tracker.db");
 const sqliteCommand = process.env.SQLITE3_PATH || "sqlite3";
 const sessionCookie = "wc_session";
-const publicPaths = new Set(["/", "/index.html", "/styles.css", "/app.js", "/admin.js", "/data/fixtures.js"]);
+const publicPaths = new Set(["/", "/index.html", "/admin.html", "/styles.css", "/app.js", "/admin.js", "/data/fixtures.js"]);
 const finalApiFootballStatuses = new Set(["FT", "AET", "PEN"]);
 const apiFootballSyncMinutes = Math.max(1, Number(process.env.API_FOOTBALL_SYNC_MINUTES || 15));
 const autoSyncEnabled = process.env.API_FOOTBALL_AUTO_SYNC !== "false";
@@ -140,7 +168,8 @@ function normalizeTeamName(value) {
     .replace(/\b(united states|usa|u\.s\.a\.)\b/gi, "us")
     .replace(/\b(turkiye|turkey)\b/gi, "turkiye")
     .replace(/\b(south korea|korea republic|korea)\b/gi, "korea republic")
-    .replace(/\b(cape verde|cabo verde)\b/gi, "cabo verde")
+    .replace(/\b(cape verde islands|cape verde|cabo verde)\b/gi, "cabo verde")
+    .replace(/\b(ivory coast|cote d ivoire|côte d ivoire)\b/gi, "cote d ivoire")
     .replace(/\b(iran|ir iran)\b/gi, "ir iran")
     .replace(/\b(dr congo|congo dr|democratic republic of congo)\b/gi, "congo dr")
     .replace(/[^a-z0-9]+/gi, " ")
@@ -234,16 +263,18 @@ async function initDb() {
   if (!matchCount[0].count) {
     const fixtures = fixtureRows();
     const inserts = fixtures.map((fixture) => `
-      INSERT INTO matches(id, stage, group_name, match_date, kickoff, kickoff_at, venue, team1, team2, team1_score, team2_score, result, notes, source_url)
+      INSERT INTO matches(id, stage, group_name, match_date, kickoff, kickoff_at, venue, team1, team2, team1_score, team2_score, result, match_status, notes, source_url)
       VALUES (
         ${sqlValue(fixture.id)}, ${sqlValue(fixture.stage)}, ${sqlValue(fixture.group)}, ${sqlValue(fixture.date)},
         ${sqlValue(fixture.kickoff)}, ${sqlValue(parseKickoffUtc(fixture.date, fixture.kickoff))}, ${sqlValue(fixture.venue)},
         ${sqlValue(fixture.team1)}, ${sqlValue(fixture.team2)}, ${sqlValue(fixture.team1Score)}, ${sqlValue(fixture.team2Score)},
-        ${sqlValue(fixture.result)}, ${sqlValue(fixture.notes)}, ${sqlValue(fixture.sourceUrl)}
+        ${sqlValue(fixture.result)}, ${sqlValue(fixture.result ? "FT" : null)}, ${sqlValue(fixture.notes)}, ${sqlValue(fixture.sourceUrl)}
       );
     `).join("\n");
     await runSql(inserts);
   }
+
+  await runSql("UPDATE matches SET match_status = 'FT' WHERE result IS NOT NULL AND (match_status IS NULL OR match_status = '');");
 
   await seedInitialPlayers();
 }
@@ -399,6 +430,8 @@ async function syncSportsResults() {
   const apiFootballLeague = process.env.API_FOOTBALL_LEAGUE || "1";
   const apiFootballSeason = process.env.API_FOOTBALL_SEASON || "2026";
   const apiFootballBaseUrl = process.env.API_FOOTBALL_BASE_URL || "https://v3.football.api-sports.io";
+  const apiFootballSyncMode = process.env.API_FOOTBALL_SYNC_MODE || "auto";
+  const dateWindowDays = Math.max(1, Number(process.env.API_FOOTBALL_DATE_WINDOW_DAYS || 3));
   const apiUrl = process.env.SPORTS_API_URL || (apiFootballKey
     ? `${apiFootballBaseUrl}/fixtures?league=${encodeURIComponent(apiFootballLeague)}&season=${encodeURIComponent(apiFootballSeason)}`
     : "");
@@ -430,10 +463,62 @@ async function syncSportsResults() {
     headers["x-apisports-key"] = apiKey;
   }
 
-  const response = await fetch(apiUrl, { headers });
-  if (!response.ok) throw new Error(`Sports API failed: ${response.status}`);
-  const payload = await response.json();
-  const sourceMatches = payload.matches || payload.response || payload.events || [];
+  async function fetchApiJson(url) {
+    const response = await fetch(url, { headers });
+    if (!response.ok) throw new Error(`Sports API failed: ${response.status}`);
+    const payload = await response.json();
+    const apiErrors = payload.errors && (Array.isArray(payload.errors) ? payload.errors.length : Object.keys(payload.errors).length)
+      ? payload.errors
+      : null;
+    return {
+      rows: payload.matches || payload.response || payload.events || [],
+      errors: apiErrors,
+      url,
+    };
+  }
+
+  function dateOnly(date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  async function fetchDateWindowMatches() {
+    const today = new Date();
+    const before = Math.floor((dateWindowDays - 1) / 2);
+    const after = dateWindowDays - before - 1;
+    const requests = [];
+    for (let offset = -before; offset <= after; offset += 1) {
+      const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + offset));
+      requests.push(`${apiFootballBaseUrl}/fixtures?date=${dateOnly(date)}`);
+    }
+
+    const rows = [];
+    const errors = [];
+    for (const url of requests) {
+      const result = await fetchApiJson(url);
+      if (result.errors) errors.push(result.errors);
+      rows.push(...result.rows.filter((item) =>
+        Number(item.league?.id) === Number(apiFootballLeague)
+        || (String(item.league?.name || "").toLowerCase() === "world cup" && Number(item.league?.season) === Number(apiFootballSeason))
+      ));
+    }
+    return {
+      rows,
+      errors: errors.length ? errors : null,
+      url: `${apiFootballBaseUrl}/fixtures?date=<${dateWindowDays}-day-window>`,
+    };
+  }
+
+  let apiResult;
+  if (apiFootballSyncMode === "date-window") {
+    apiResult = await fetchDateWindowMatches();
+  } else {
+    apiResult = await fetchApiJson(apiUrl);
+    if (apiFootballSyncMode === "auto" && apiResult.errors && apiFootballKey) {
+      apiResult = await fetchDateWindowMatches();
+    }
+  }
+
+  const sourceMatches = apiResult.rows;
   const localMatches = await runSql("SELECT id, team1, team2 FROM matches;", true);
   const localByTeams = new Map(localMatches.map((match) => [
     `${normalizeTeamName(match.team1)}|${normalizeTeamName(match.team2)}`,
@@ -489,7 +574,9 @@ async function syncSportsResults() {
     sourceMatches: sourceMatches.length,
     skippedWithoutScore,
     unmatchedSamples,
-    message: `API-Football sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}.`,
+    apiErrors: apiResult.errors,
+    apiSource: apiResult.url.replace(apiFootballBaseUrl, ""),
+    message: `API-Football sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}${apiResult.errors ? `; API reported ${JSON.stringify(apiResult.errors)}` : ""}.`,
   };
   lastSyncStatus = {
     ...lastSyncStatus,
@@ -502,6 +589,8 @@ async function syncSportsResults() {
     sourceMatches: sourceMatches.length,
     skippedWithoutScore,
     unmatchedSamples,
+    apiErrors: apiResult.errors,
+    apiSource: result.apiSource,
     message: result.message,
     error: null,
   };
@@ -748,6 +837,7 @@ initDb().then(() => {
   }).listen(port, () => {
     console.log(`World Cup bet tracker running at http://localhost:${port}`);
     console.log("Default admin: admin / admin123");
+    console.log(process.env.API_FOOTBALL_KEY ? "API-Football key loaded from environment." : "API-Football key not set. Add API_FOOTBALL_KEY to .env for local score sync.");
     startApiFootballAutoSync();
   });
 }).catch((error) => {
