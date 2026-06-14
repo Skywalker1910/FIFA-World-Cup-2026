@@ -679,8 +679,9 @@ async function router(request, response) {
     }
     const token = crypto.randomBytes(32).toString("hex");
     await runSql(`INSERT INTO sessions(token, user_id, expires_at) VALUES (${sqlValue(token)}, ${user.id}, datetime('now', '+7 days'));`);
+    const secureCookieFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
     sendJson(response, 200, { ok: true, user: { id: user.id, login_id: user.login_id, display_name: user.display_name, role: user.role } }, {
-      "set-cookie": `${sessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}`,
+      "set-cookie": `${sessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}${secureCookieFlag}`,
     });
     return;
   }
@@ -688,7 +689,8 @@ async function router(request, response) {
   if (request.method === "POST" && url.pathname === "/api/logout") {
     const token = parseCookies(request)[sessionCookie];
     if (token) await runSql(`DELETE FROM sessions WHERE token = ${sqlValue(token)};`);
-    sendJson(response, 200, { ok: true }, { "set-cookie": `${sessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` });
+    const secureClearFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
+    sendJson(response, 200, { ok: true }, { "set-cookie": `${sessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureClearFlag}` });
     return;
   }
 
@@ -904,8 +906,8 @@ async function router(request, response) {
 initDb().then(() => {
   http.createServer((request, response) => {
     router(request, response).catch((error) => sendJson(response, 500, { ok: false, error: error.message }));
-  }).listen(port, () => {
-    console.log(`World Cup bet tracker running at http://localhost:${port}`);
+  }).listen(port, "0.0.0.0", () => {
+    console.log(`World Cup bet tracker running at http://0.0.0.0:${port}`);
     console.log("Default admin: admin / admin123");
     console.log(process.env.FOOTBALL_DATA_API_KEY ? "football-data.org key loaded from environment." : "football-data.org key not set. Add FOOTBALL_DATA_API_KEY to .env for local score sync.");
     startSportsAutoSync();
