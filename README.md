@@ -118,7 +118,7 @@ The `/admin` page has a `Sync football-data.org Results` button. The default com
 
 The sync updates live/current scores, stores API match status, and only sets the final betting result when football-data.org reports `FINISHED`.
 
-When `FOOTBALL_DATA_API_KEY` is set, the server automatically syncs scores every `FOOTBALL_DATA_SYNC_MINUTES` minutes. The public dashboard refreshes once per minute.
+When `FOOTBALL_DATA_AUTO_SYNC=true` is set, the server automatically syncs scores every `FOOTBALL_DATA_SYNC_MINUTES` minutes. Leave auto-sync off until `/api/sync-status` or the Command Center manual sync confirms your football-data.org plan can access the configured competition.
 
 Check sync status at:
 

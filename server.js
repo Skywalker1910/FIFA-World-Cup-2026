@@ -45,7 +45,7 @@ const sessionCookie = "wc_session";
 const publicPaths = new Set(["/", "/index.html", "/admin.html", "/styles.css", "/app.js", "/admin.js", "/data/fixtures.js"]);
 const finalSportsStatuses = new Set(["FT", "AET", "PEN", "FINISHED"]);
 const sportsSyncMinutes = Math.max(1, Number(process.env.FOOTBALL_DATA_SYNC_MINUTES || 15));
-const autoSyncEnabled = process.env.FOOTBALL_DATA_AUTO_SYNC !== "false";
+const autoSyncEnabled = process.env.FOOTBALL_DATA_AUTO_SYNC === "true";
 let syncInProgress = false;
 let lastSyncStatus = {
   enabled: false,
@@ -621,10 +621,11 @@ async function runScheduledSync(reason = "scheduled") {
       enabled: true,
       running: false,
       lastErrorAt: new Date().toISOString(),
-      message: "football-data.org sync failed.",
+      message: `football-data.org ${reason} sync could not complete.`,
       error: error.message,
     };
-    console.error("football-data.org sync failed:", error);
+    if (reason === "manual") console.error("football-data.org manual sync failed:", error);
+    else console.log(`football-data.org ${reason} sync could not complete: ${error.message}`);
     return lastSyncStatus;
   } finally {
     syncInProgress = false;
@@ -637,13 +638,15 @@ function startSportsAutoSync() {
   lastSyncStatus = {
     ...lastSyncStatus,
     enabled: Boolean(footballDataKey) && autoSyncEnabled,
-    message: footballDataKey
-      ? `football-data.org auto sync every ${sportsSyncMinutes} minutes.`
-      : "Automatic football-data.org sync is waiting for FOOTBALL_DATA_API_KEY.",
+    message: !footballDataKey
+      ? "Automatic football-data.org sync is waiting for FOOTBALL_DATA_API_KEY."
+      : autoSyncEnabled
+        ? `football-data.org auto sync every ${sportsSyncMinutes} minutes.`
+        : "Automatic football-data.org sync is disabled.",
   };
   if (!footballDataKey || !autoSyncEnabled) return;
 
-  setTimeout(() => runScheduledSync("startup"), 5000);
+  setTimeout(() => runScheduledSync("startup"), 60_000);
   setInterval(() => runScheduledSync("scheduled"), sportsSyncMinutes * 60 * 1000);
 }
 
