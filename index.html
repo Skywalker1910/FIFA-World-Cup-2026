@@ -42,23 +42,37 @@
             <h2 id="viewTitle">Dashboard</h2>
           </div>
           <div class="topbar-actions">
+            <a id="adminSwitchButton" class="secondary-light-button" href="/admin" hidden><i data-lucide="shield-check"></i>Command Center</a>
             <button id="loginToggleButton" class="secondary-light-button" type="button"><i data-lucide="log-in"></i>Login</button>
             <div class="status-pill" id="saveStatus">Connecting</div>
           </div>
         </section>
 
-        <section class="view active" id="dashboardView">
-          <section class="login-panel panel login-panel-floating" id="loginPanel" hidden>
-            <div class="panel-heading">
-              <h3>Login</h3>
-              <span>Admin creates accounts</span>
+        <section class="login-panel login-panel-floating" id="loginPanel" hidden>
+          <div class="login-dialog" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+            <button class="login-close-button" id="loginCloseButton" type="button" aria-label="Close login">
+              <i data-lucide="x"></i>
+            </button>
+            <div class="login-orb" aria-hidden="true">
+              <span>26</span>
             </div>
-            <form id="loginForm" class="form-grid">
+            <div class="login-copy">
+              <h3 id="loginTitle">Sign in to World Cup Bets</h3>
+              <p>Use the login ID and temporary password shared by the admin.</p>
+            </div>
+            <form id="loginForm" class="login-form">
               <input name="loginId" placeholder="Login ID" autocomplete="username" required>
               <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
-              <button class="primary-button" type="submit"><i data-lucide="arrow-right"></i>Sign in</button>
+              <button class="primary-button" type="submit"><i data-lucide="arrow-right"></i>Continue</button>
             </form>
-          </section>
+            <div class="login-footnote">
+              <i data-lucide="shield-check"></i>
+              <span>Your session is stored securely in this browser.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="view active" id="dashboardView">
           <div class="metric-grid" id="metrics"></div>
           <section class="panel live-panel">
             <div class="panel-heading">

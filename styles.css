@@ -2573,7 +2573,173 @@ input::placeholder {
 }
 
 .login-panel-floating {
-  margin-bottom: 18px;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 28px;
+  background: rgba(245, 245, 247, 0.72);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.login-dialog {
+  position: relative;
+  width: min(92vw, 560px);
+  padding: 42px 56px 46px;
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #1d1d1f;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.18);
+}
+
+.login-close-button {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #1d1d1f;
+}
+
+.login-close-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.login-close-button:hover {
+  background: rgba(0, 0, 0, 0.09);
+}
+
+.login-orb {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 24px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, #ffffff 0 34%, transparent 35%),
+    conic-gradient(from 12deg, #ff5f6d, #ffc371, #47d7ff, #8b73ff, #ff4fd8, #ff5f6d);
+}
+
+.login-orb::before {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border-radius: inherit;
+  background: #ffffff;
+}
+
+.login-orb span {
+  position: relative;
+  z-index: 1;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #1d1d1f;
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.login-copy {
+  text-align: center;
+}
+
+.login-copy h3 {
+  margin: 0;
+  color: #1d1d1f;
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+}
+
+.login-copy p {
+  max-width: 380px;
+  margin: 10px auto 26px;
+  color: #6e6e73;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.login-form input {
+  height: 56px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #1d1d1f;
+  padding: 0 16px;
+  font-size: 17px;
+}
+
+.login-form input::placeholder {
+  color: #8e8e93;
+}
+
+.login-form input:focus {
+  border-color: #2997ff;
+  box-shadow: 0 0 0 3px rgba(41, 151, 255, 0.22);
+}
+
+.login-form .primary-button {
+  height: 46px;
+  margin-top: 8px;
+  border-radius: 12px;
+  background: #0a84ff;
+  color: #fff;
+}
+
+.login-footnote {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  color: #6e6e73;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.login-footnote svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  color: #0a84ff;
+}
+
+.admin-login-badge {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto 18px;
+  padding: 8px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  background: rgba(10, 132, 255, 0.08);
+  color: #0a84ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-login-badge svg {
+  width: 15px;
+  height: 15px;
 }
 
 .status-badge {
@@ -2701,5 +2867,289 @@ input::placeholder {
 
   .nav-tab {
     padding: 7px 8px;
+  }
+
+  .login-dialog {
+    padding: 34px 22px 28px;
+  }
+
+  .login-orb {
+    width: 108px;
+    height: 108px;
+  }
+}
+
+.admin-wide-panel {
+  grid-column: 1 / -1;
+}
+
+.admin-user {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.1fr) repeat(3, minmax(150px, 0.8fr)) 120px 96px 84px;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.admin-match {
+  grid-template-columns: minmax(220px, 1.2fr) repeat(6, minmax(110px, 0.7fr)) 82px 82px 110px 100px minmax(120px, 0.8fr) 74px;
+  overflow-x: auto;
+}
+
+.admin-item-title,
+.admin-match-summary {
+  min-width: 0;
+}
+
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #6e6e73;
+  font-size: 13px;
+}
+
+.admin-check input {
+  width: 16px;
+  height: 16px;
+}
+
+.command-nav {
+  position: sticky;
+  top: 92px;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  margin: -8px 0 22px;
+  padding: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: saturate(180%) blur(18px);
+  overflow-x: auto;
+}
+
+.command-tab {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #6e6e73;
+  padding: 0 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.command-tab svg {
+  width: 16px;
+  height: 16px;
+}
+
+.command-tab.active {
+  background: #1d1d1f;
+  color: #fff;
+}
+
+.admin-page {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-page[hidden] {
+  display: none !important;
+}
+
+.admin-bets-table {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.admin-bets-header,
+.admin-bets-row {
+  display: grid;
+  grid-template-columns: 320px minmax(420px, 1fr) 116px;
+  gap: 16px;
+  align-items: center;
+  min-width: 860px;
+}
+
+.admin-bets-header {
+  align-items: end;
+  position: static;
+  padding: 0 0 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
+  color: #6e6e73;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-bets-header > strong,
+.admin-bet-picks-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-bets-row {
+  padding: 14px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.admin-bet-picks-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--player-count), minmax(150px, 1fr));
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-bets-header .admin-bet-picks-grid {
+  align-items: end;
+}
+
+.admin-bet-pick-cell {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-bet-pick-cell span {
+  display: none;
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-bet-picks-grid select {
+  width: 100%;
+  min-width: 150px;
+}
+
+.admin-page[data-admin-page="players"] .form-grid,
+.admin-page[data-admin-page="settings"] .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  align-items: end;
+  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 20px;
+  background: rgba(245, 245, 247, 0.72);
+}
+
+.admin-page[data-admin-page="settings"] {
+  grid-template-columns: minmax(320px, 0.9fr) minmax(320px, 1.1fr);
+}
+
+.admin-page[data-admin-page="settings"] .secondary-light-button {
+  margin-top: 12px;
+}
+
+.ledger-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ledger-balance,
+.ledger-row {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 14px;
+}
+
+.ledger-balance {
+  display: grid;
+  gap: 4px;
+}
+
+.ledger-balance span {
+  color: #1d1d1f;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.ledger-balance.positive span {
+  color: #248a3d;
+}
+
+.ledger-balance.negative span {
+  color: #d70015;
+}
+
+.ledger-balance small,
+.ledger-row span {
+  color: #6e6e73;
+}
+
+.ledger-settlements {
+  display: grid;
+  gap: 10px;
+}
+
+.ledger-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.ledger-row b {
+  color: #1d1d1f;
+}
+
+@media (max-width: 1100px) {
+  .admin-user,
+  .admin-match {
+    grid-template-columns: 1fr;
+  }
+
+  .command-nav {
+    top: 72px;
+    border-radius: 20px;
+  }
+
+  .ledger-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-page[data-admin-page="settings"] {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-bets-table {
+    overflow-x: visible;
+  }
+
+  .admin-bets-header {
+    display: none;
+  }
+
+  .admin-bets-row {
+    grid-template-columns: 1fr;
+    min-width: 0;
+    gap: 12px;
+    padding: 16px 0;
+  }
+
+  .admin-bet-picks-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-bet-pick-cell span {
+    display: block;
   }
 }

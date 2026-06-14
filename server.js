@@ -772,11 +772,14 @@ async function router(request, response) {
     const passwordSql = body.password ? `, password_hash = ${sqlValue(hashPassword(body.password))}` : "";
     await runSql(`
       UPDATE users
-      SET display_name = COALESCE(${sqlValue(body.displayName)}, display_name),
+      SET login_id = COALESCE(${sqlValue(body.loginId)}, login_id),
+          display_name = COALESCE(${sqlValue(body.displayName)}, display_name),
+          role = COALESCE(${body.role === "admin" ? "'admin'" : body.role === "player" ? "'player'" : "NULL"}, role),
           is_active = COALESCE(${body.isActive === undefined ? "NULL" : sqlValue(body.isActive ? 1 : 0)}, is_active)
           ${passwordSql}
       WHERE id = ${sqlValue(id)};
     `);
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.user.updated', ${sqlValue(JSON.stringify({ id, ...body, password: body.password ? "[redacted]" : "" }))});`);
     sendJson(response, 200, { ok: true, state: await appState(admin) });
     return;
   }
@@ -795,6 +798,75 @@ async function router(request, response) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/admin/bets") {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const body = await readBody(request);
+    const userId = Number(body.userId);
+    const matchId = Number(body.matchId);
+    const pick = String(body.pick || "");
+    const [users, matches] = await Promise.all([
+      runSql(`SELECT id, role FROM users WHERE id = ${sqlValue(userId)};`, true),
+      runSql(`SELECT id FROM matches WHERE id = ${sqlValue(matchId)};`, true),
+    ]);
+    if (!users[0] || users[0].role !== "player") {
+      sendJson(response, 400, { ok: false, error: "Bet must belong to a player account" });
+      return;
+    }
+    if (!matches[0]) {
+      sendJson(response, 404, { ok: false, error: "Match not found" });
+      return;
+    }
+    if (!pick) {
+      await runSql(`DELETE FROM bets WHERE user_id = ${sqlValue(userId)} AND match_id = ${sqlValue(matchId)};`);
+    } else {
+      if (!["Team 1", "Team 2", "Draw"].includes(pick)) {
+        sendJson(response, 400, { ok: false, error: "Invalid pick" });
+        return;
+      }
+      await runSql(`
+        INSERT INTO bets(user_id, match_id, pick, updated_at)
+        VALUES (${sqlValue(userId)}, ${sqlValue(matchId)}, ${sqlValue(pick)}, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, match_id) DO UPDATE SET pick = excluded.pick, updated_at = CURRENT_TIMESTAMP;
+      `);
+    }
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.bet.updated', ${sqlValue(JSON.stringify({ userId, matchId, pick }))});`);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/admin/matches") {
+    const admin = await requireAdmin(request, response);
+    if (!admin) return;
+    const body = await readBody(request);
+    if (!body.team1 || !body.team2) {
+      sendJson(response, 400, { ok: false, error: "Team 1 and Team 2 are required" });
+      return;
+    }
+    const nextRows = await runSql("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM matches;", true);
+    const id = Number(body.id) || Number(nextRows[0].next_id);
+    const kickoffAt = parseKickoffUtc(body.date, body.kickoff);
+    await runSql(`
+      INSERT INTO matches(id, stage, group_name, match_date, kickoff, kickoff_at, venue, team1, team2, match_status, notes)
+      VALUES (
+        ${sqlValue(id)},
+        ${sqlValue(body.stage)},
+        ${sqlValue(body.groupName)},
+        ${sqlValue(body.date)},
+        ${sqlValue(body.kickoff)},
+        ${sqlValue(kickoffAt)},
+        ${sqlValue(body.venue)},
+        ${sqlValue(body.team1)},
+        ${sqlValue(body.team2)},
+        ${sqlValue(body.matchStatus || "NS")},
+        ${sqlValue(body.notes)}
+      );
+    `);
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.match.created', ${sqlValue(JSON.stringify({ id, ...body }))});`);
+    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    return;
+  }
+
   if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/matches/")) {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
@@ -803,16 +875,23 @@ async function router(request, response) {
     const kickoffAt = parseKickoffUtc(body.date, body.kickoff);
     await runSql(`
       UPDATE matches SET
+        stage = COALESCE(${sqlValue(body.stage)}, stage),
+        group_name = COALESCE(${sqlValue(body.groupName)}, group_name),
         match_date = COALESCE(${sqlValue(body.date)}, match_date),
         kickoff = COALESCE(${sqlValue(body.kickoff)}, kickoff),
         kickoff_at = COALESCE(${sqlValue(kickoffAt)}, kickoff_at),
+        venue = COALESCE(${sqlValue(body.venue)}, venue),
+        team1 = COALESCE(${sqlValue(body.team1)}, team1),
+        team2 = COALESCE(${sqlValue(body.team2)}, team2),
         team1_score = ${sqlValue(body.team1Score)},
         team2_score = ${sqlValue(body.team2Score)},
         result = ${sqlValue(body.result)},
+        match_status = ${sqlValue(body.matchStatus)},
         notes = COALESCE(${sqlValue(body.notes)}, notes),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${sqlValue(id)};
     `);
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.match.updated', ${sqlValue(JSON.stringify({ id, ...body }))});`);
     sendJson(response, 200, { ok: true, state: await appState(admin) });
     return;
   }

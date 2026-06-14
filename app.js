@@ -23,6 +23,7 @@ const elements = {
   accountLabel: document.querySelector("#accountLabel"),
   logoutButton: document.querySelector("#logoutButton"),
   loginPanel: document.querySelector("#loginPanel"),
+  loginCloseButton: document.querySelector("#loginCloseButton"),
   loginForm: document.querySelector("#loginForm"),
   metrics: document.querySelector("#metrics"),
   leaderboard: document.querySelector("#leaderboard"),
@@ -48,6 +49,7 @@ const elements = {
   stageFilter: document.querySelector("#stageFilter"),
   groupFilter: document.querySelector("#groupFilter"),
   statusFilter: document.querySelector("#statusFilter"),
+  adminSwitchButton: document.querySelector("#adminSwitchButton"),
   loginToggleButton: document.querySelector("#loginToggleButton"),
 };
 
@@ -211,6 +213,7 @@ function renderAccount() {
   elements.accountLabel.textContent = user ? `${user.display_name} (${user.role})` : "Not signed in";
   elements.loginPanel.hidden = Boolean(user) || !loginPanelOpen;
   elements.logoutButton.style.display = user ? "" : "none";
+  elements.adminSwitchButton.hidden = user?.role !== "admin";
   elements.loginToggleButton.innerHTML = `<i data-lucide="${user ? "user-round" : "log-in"}"></i>${escapeHtml(user ? user.display_name : "Login")}`;
   window.lucide?.createIcons();
 }
@@ -632,9 +635,27 @@ elements.loginToggleButton.addEventListener("click", () => {
   loginPanelOpen = !loginPanelOpen;
   renderAccount();
   if (loginPanelOpen) {
-    elements.loginPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     elements.loginPanel.querySelector("input")?.focus({ preventScroll: true });
   }
+});
+
+elements.loginCloseButton.addEventListener("click", () => {
+  loginPanelOpen = false;
+  renderAccount();
+  elements.loginToggleButton.focus({ preventScroll: true });
+});
+
+elements.loginPanel.addEventListener("click", (event) => {
+  if (event.target !== elements.loginPanel) return;
+  loginPanelOpen = false;
+  renderAccount();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || elements.loginPanel.hidden) return;
+  loginPanelOpen = false;
+  renderAccount();
+  elements.loginToggleButton.focus({ preventScroll: true });
 });
 
 [elements.searchInput, elements.stageFilter, elements.groupFilter, elements.statusFilter].forEach((element) => {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Admin - World Cup 2026 Bet Tracker</title>
+    <title>Command Center - World Cup 2026 Bet Tracker</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -12,8 +12,8 @@
         <div class="brand">
           <span class="brand-mark">26</span>
           <div>
-            <h1>Admin Console</h1>
-            <p>Users, results, settings</p>
+            <h1>Command Center</h1>
+            <p>Scores, bets, players, ledger</p>
           </div>
         </div>
         <nav class="nav-tabs" aria-label="Admin navigation">
@@ -33,54 +33,137 @@
         <section class="topbar">
           <div>
             <p class="eyebrow">Private Admin</p>
-            <h2>Admin Panel</h2>
+            <h2>Command Center</h2>
           </div>
-          <div class="status-pill" id="saveStatus">Connecting</div>
+          <div class="topbar-actions">
+            <a class="secondary-light-button" href="/"><i data-lucide="globe-2"></i>Public App</a>
+            <div class="status-pill" id="saveStatus">Connecting</div>
+          </div>
         </section>
 
-        <section class="login-panel panel" id="loginPanel">
-          <div class="panel-heading">
-            <h3>Admin Login</h3>
-            <span>Restricted area</span>
-          </div>
-          <form id="loginForm" class="form-grid">
-            <input name="loginId" placeholder="Login ID" autocomplete="username" required>
-            <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
-            <button class="primary-button" type="submit"><i data-lucide="arrow-right"></i>Sign in</button>
-          </form>
-        </section>
-
-        <section class="admin-grid" id="adminContent">
-          <section class="panel">
-            <div class="panel-heading">
-              <h3>Create User</h3>
-              <span>Share credentials manually</span>
+        <section class="login-panel login-panel-floating admin-login-panel" id="loginPanel">
+          <div class="login-dialog" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle">
+            <div class="admin-login-badge"><i data-lucide="shield-check"></i>Admin Access</div>
+            <div class="login-orb" aria-hidden="true">
+              <span>26</span>
             </div>
-            <form id="createUserForm" class="form-grid">
-              <input name="displayName" placeholder="Display name" required>
-              <input name="loginId" placeholder="Login ID" required>
-              <input name="password" placeholder="Temporary password" required>
-              <select name="role">
-                <option value="player">Player</option>
-                <option value="admin">Admin</option>
-              </select>
-              <button class="primary-button" type="submit"><i data-lucide="user-plus"></i>Create user</button>
+            <div class="login-copy">
+              <h3 id="adminLoginTitle">Sign in to Command Center</h3>
+              <p>Use your admin credentials to manage scores, bets, players, ledger, and app settings.</p>
+            </div>
+            <form id="loginForm" class="login-form">
+              <input name="loginId" placeholder="Login ID" autocomplete="username" required>
+              <input name="password" placeholder="Password" type="password" autocomplete="current-password" required>
+              <button class="primary-button" type="submit"><i data-lucide="arrow-right"></i>Continue</button>
             </form>
-            <div class="compact-list" id="adminUsers"></div>
+            <div class="login-footnote">
+              <i data-lucide="lock-keyhole"></i>
+              <span>Restricted command access for tournament administrators only.</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="adminContent">
+          <nav class="command-nav" aria-label="Command Center sections">
+            <button class="command-tab active" data-admin-view="scores" type="button"><i data-lucide="trophy"></i>Match Scores</button>
+            <button class="command-tab" data-admin-view="bets" type="button"><i data-lucide="list-checks"></i>Player Bets</button>
+            <button class="command-tab" data-admin-view="players" type="button"><i data-lucide="users-round"></i>Player Records</button>
+            <button class="command-tab" data-admin-view="ledger" type="button"><i data-lucide="receipt-text"></i>Ledger</button>
+            <button class="command-tab" data-admin-view="settings" type="button"><i data-lucide="settings"></i>Settings</button>
+          </nav>
+
+          <section class="admin-page" data-admin-page="scores">
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Create Match</h3>
+                <span>Add fixtures directly to SQLite</span>
+              </div>
+              <form id="createMatchForm" class="form-grid">
+                <input name="id" type="number" min="1" step="1" placeholder="Match number">
+                <input name="stage" placeholder="Stage">
+                <input name="groupName" placeholder="Group">
+                <input name="date" type="date">
+                <input name="kickoff" placeholder="Kickoff e.g. 3:00 PM ET">
+                <input name="venue" placeholder="Venue">
+                <input name="team1" placeholder="Team 1" required>
+                <input name="team2" placeholder="Team 2" required>
+                <button class="primary-button" type="submit"><i data-lucide="calendar-plus"></i>Create match</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Match Scores & Results</h3>
+                <span>Update scores, result, status, teams, and schedule</span>
+              </div>
+              <div class="compact-list" id="adminMatches"></div>
+            </section>
           </section>
 
-          <section class="panel">
-            <div class="panel-heading">
-              <h3>Settings</h3>
-              <span>Applies immediately</span>
-            </div>
-            <form id="settingsForm" class="form-grid">
-              <input name="stake" type="number" min="0" step="0.25" placeholder="Stake">
-              <input name="lockMinutes" type="number" min="0" step="1" placeholder="Lock minutes">
-              <button class="primary-button" type="submit"><i data-lucide="save"></i>Save settings</button>
-            </form>
-            <button id="syncResultsButton" class="secondary-light-button" type="button"><i data-lucide="refresh-cw"></i>Sync API-Football Results</button>
-            <div class="compact-list" id="adminMatches"></div>
+          <section class="admin-page" data-admin-page="bets" hidden>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Player Bets</h3>
+                <span>Update all player picks side by side per match</span>
+              </div>
+              <div class="compact-list" id="adminBets"></div>
+            </section>
+          </section>
+
+          <section class="admin-page" data-admin-page="players" hidden>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Player Records</h3>
+                <span>Display name, login ID, password, and account tag</span>
+              </div>
+              <form id="createUserForm" class="form-grid">
+                <input name="displayName" placeholder="Display name" required>
+                <input name="loginId" placeholder="Login ID" required>
+                <input name="password" placeholder="Temporary password" required>
+                <select name="role">
+                  <option value="player">Player</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button class="primary-button" type="submit"><i data-lucide="user-plus"></i>Create user</button>
+              </form>
+              <div class="compact-list" id="adminUsers"></div>
+            </section>
+          </section>
+
+          <section class="admin-page" data-admin-page="ledger" hidden>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Ledger</h3>
+                <span>Net balances and settlement instructions</span>
+              </div>
+              <div class="compact-list" id="adminLedger"></div>
+            </section>
+          </section>
+
+          <section class="admin-page" data-admin-page="settings" hidden>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Settings</h3>
+                <span>Applies immediately</span>
+              </div>
+              <form id="settingsForm" class="form-grid">
+                <input name="stake" type="number" min="0" step="0.25" placeholder="Stake">
+                <input name="lockMinutes" type="number" min="0" step="1" placeholder="Lock minutes">
+                <button class="primary-button" type="submit"><i data-lucide="save"></i>Save settings</button>
+              </form>
+              <button id="syncResultsButton" class="secondary-light-button" type="button"><i data-lucide="refresh-cw"></i>Sync API-Football Results</button>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>About App</h3>
+                <span>Operational details</span>
+              </div>
+              <div class="compact-list">
+                <div class="compact-item"><strong>Database</strong><span>SQLite</span></div>
+                <div class="compact-item"><strong>Sports API</strong><span>API-Football sync from server environment</span></div>
+                <div class="compact-item"><strong>Bet Lock</strong><span>Controlled by lock minutes setting</span></div>
+              </div>
+            </section>
           </section>
         </section>
       </main>
