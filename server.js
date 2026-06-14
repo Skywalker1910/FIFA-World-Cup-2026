@@ -901,6 +901,11 @@ async function router(request, response) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/health") {
+    sendJson(response, 200, { ok: true, status: "healthy" });
+    return;
+  }
+
   if (request.method === "GET" && publicPaths.has(url.pathname)) {
     serveStatic(request, response);
     return;
