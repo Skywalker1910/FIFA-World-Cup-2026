@@ -46,6 +46,7 @@ const publicPaths = new Set(["/", "/index.html", "/admin.html", "/styles.css", "
 const finalSportsStatuses = new Set(["FT", "AET", "PEN", "FINISHED"]);
 const sportsSyncMinutes = Math.max(1, Number(process.env.FOOTBALL_DATA_SYNC_MINUTES || 15));
 const autoSyncEnabled = process.env.FOOTBALL_DATA_AUTO_SYNC === "true";
+const predictionLockAt = process.env.PREDICTION_LOCK_AT || "2026-06-27T23:59:59-04:00";
 
 function footballDataConfig() {
   const keySource = process.env.FOOTBALL_DATA_API_KEY
@@ -89,6 +90,30 @@ const initialPlayers = [
   { displayName: "Mith", loginId: "MithileshBiradar", password: "Player@2", sourceInitial: "M" },
   { displayName: "TBD", loginId: "ShardulVartak", password: "Player@3", sourceInitial: "S" },
 ];
+const servers = ["US", "India"];
+
+function normalizeServer(value) {
+  return servers.includes(value) ? value : "US";
+}
+
+function parseServerAccess(value, role = "player") {
+  if (role === "admin") return servers;
+  const access = String(value || "US")
+    .split(",")
+    .map((item) => normalizeServer(item.trim()))
+    .filter((item, index, list) => item && list.indexOf(item) === index);
+  return access.length ? access : ["US"];
+}
+
+function serverAccessValue(value, role = "player") {
+  return parseServerAccess(Array.isArray(value) ? value.join(",") : value, role).join(",");
+}
+
+function nullableScore(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const score = Number(value);
+  return Number.isInteger(score) && score >= 0 ? score : null;
+}
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -152,6 +177,37 @@ function cleanAvatarData(value) {
     throw new Error("Profile picture must be smaller than 750 KB");
   }
   return avatar;
+}
+
+function cleanText(value, maxLength = 120) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function cleanJsonArray(value, maxItems, maxLength = 120) {
+  const source = Array.isArray(value) ? value : [];
+  return source.map((item) => cleanText(item, maxLength)).filter(Boolean).slice(0, maxItems);
+}
+
+function cleanKnockoutPredictions(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    quarterfinalists: cleanJsonArray(source.quarterfinalists, 8),
+    semifinalists: cleanJsonArray(source.semifinalists, 4),
+    finalists: cleanJsonArray(source.finalists, 2),
+    winner: cleanText(source.winner),
+  };
+}
+
+function parseJsonField(value, fallback) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function tournamentPredictionsLocked() {
+  return Date.now() >= new Date(predictionLockAt).getTime();
 }
 
 function parseCookies(request) {
@@ -232,7 +288,12 @@ async function initDb() {
       display_name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin','player')),
+      server_access TEXT NOT NULL DEFAULT 'US',
       avatar_data TEXT,
+      supported_team TEXT,
+      supported_player TEXT,
+      golden_boot_predictions TEXT,
+      knockout_predictions TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -269,10 +330,13 @@ async function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       match_id INTEGER NOT NULL,
+      server TEXT NOT NULL DEFAULT 'US' CHECK(server IN ('US','India')),
       pick TEXT NOT NULL CHECK(pick IN ('Team 1','Team 2','Draw')),
+      predicted_team1_score INTEGER,
+      predicted_team2_score INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, match_id),
+      UNIQUE(user_id, match_id, server),
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(match_id) REFERENCES matches(id)
     );
@@ -298,11 +362,68 @@ async function initDb() {
     if (!String(error.message).includes("duplicate column name")) throw error;
   }
 
+  for (const statement of [
+    "ALTER TABLE users ADD COLUMN supported_team TEXT;",
+    "ALTER TABLE users ADD COLUMN supported_player TEXT;",
+    "ALTER TABLE users ADD COLUMN golden_boot_predictions TEXT;",
+    "ALTER TABLE users ADD COLUMN knockout_predictions TEXT;",
+  ]) {
+    try {
+      await runSql(statement);
+    } catch (error) {
+      if (!String(error.message).includes("duplicate column name")) throw error;
+    }
+  }
+
+  try {
+    await runSql("ALTER TABLE users ADD COLUMN server_access TEXT NOT NULL DEFAULT 'US';");
+  } catch (error) {
+    if (!String(error.message).includes("duplicate column name")) throw error;
+  }
+  await runSql(`
+    UPDATE users SET server_access = 'US,India' WHERE role = 'admin';
+    UPDATE users SET server_access = 'US' WHERE role = 'player' AND (server_access IS NULL OR server_access = '');
+  `);
+
+  const betColumns = await runSql("PRAGMA table_info(bets);", true);
+  if (!betColumns.some((column) => column.name === "server")) {
+    await runSql(`
+      BEGIN;
+      ALTER TABLE bets RENAME TO bets_old;
+      CREATE TABLE bets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        match_id INTEGER NOT NULL,
+        server TEXT NOT NULL DEFAULT 'US' CHECK(server IN ('US','India')),
+        pick TEXT NOT NULL CHECK(pick IN ('Team 1','Team 2','Draw')),
+        predicted_team1_score INTEGER,
+        predicted_team2_score INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, match_id, server),
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(match_id) REFERENCES matches(id)
+      );
+      INSERT INTO bets(id, user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, created_at, updated_at)
+      SELECT id, user_id, match_id, 'US', pick, NULL, NULL, created_at, updated_at FROM bets_old;
+      DROP TABLE bets_old;
+      COMMIT;
+    `);
+  }
+
+  const migratedBetColumns = await runSql("PRAGMA table_info(bets);", true);
+  if (!migratedBetColumns.some((column) => column.name === "predicted_team1_score")) {
+    await runSql("ALTER TABLE bets ADD COLUMN predicted_team1_score INTEGER;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "predicted_team2_score")) {
+    await runSql("ALTER TABLE bets ADD COLUMN predicted_team2_score INTEGER;");
+  }
+
   const adminCount = await runSql("SELECT COUNT(*) AS count FROM users WHERE role = 'admin';", true);
   if (!adminCount[0].count) {
     await runSql(`
-      INSERT INTO users(login_id, display_name, password_hash, role)
-      VALUES ('admin', 'Admin', ${sqlValue(hashPassword("admin123"))}, 'admin');
+      INSERT INTO users(login_id, display_name, password_hash, role, server_access)
+      VALUES ('admin', 'Admin', ${sqlValue(hashPassword("admin123"))}, 'admin', 'US,India');
     `);
   }
 
@@ -329,8 +450,8 @@ async function initDb() {
 async function seedInitialPlayers() {
   const fixtures = fixtureRows();
   const userSql = initialPlayers.map((player) => `
-    INSERT INTO users(login_id, display_name, password_hash, role, is_active)
-    VALUES (${sqlValue(player.loginId)}, ${sqlValue(player.displayName)}, ${sqlValue(hashPassword(player.password))}, 'player', 1)
+    INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_active)
+    VALUES (${sqlValue(player.loginId)}, ${sqlValue(player.displayName)}, ${sqlValue(hashPassword(player.password))}, 'player', 'US', 1)
     ON CONFLICT(login_id) DO NOTHING;
   `).join("\n");
   await runSql(userSql);
@@ -350,10 +471,12 @@ async function seedInitialPlayers() {
     return fixtures
       .filter((fixture) => fixture.picks?.[player.sourceInitial])
       .map((fixture) => `
-        INSERT INTO bets(user_id, match_id, pick, updated_at)
-        VALUES (${userId}, ${fixture.id}, ${sqlValue(fixture.picks[player.sourceInitial])}, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id, match_id) DO UPDATE SET
+        INSERT INTO bets(user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, updated_at)
+        VALUES (${userId}, ${fixture.id}, 'US', ${sqlValue(fixture.picks[player.sourceInitial])}, NULL, NULL, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, match_id, server) DO UPDATE SET
           pick = excluded.pick,
+          predicted_team1_score = excluded.predicted_team1_score,
+          predicted_team2_score = excluded.predicted_team2_score,
           updated_at = CURRENT_TIMESTAMP;
       `);
   }).join("\n");
@@ -364,7 +487,8 @@ async function currentUser(request) {
   const token = parseCookies(request)[sessionCookie];
   if (!token) return null;
   const rows = await runSql(`
-    SELECT users.id, users.login_id, users.display_name, users.role, users.avatar_data
+    SELECT users.id, users.login_id, users.display_name, users.role, users.server_access, users.avatar_data,
+           users.supported_team, users.supported_player, users.golden_boot_predictions, users.knockout_predictions
     FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ${sqlValue(token)}
@@ -380,8 +504,20 @@ function publicUser(user) {
     login_id: user.login_id,
     display_name: user.display_name,
     role: user.role,
+    servers: parseServerAccess(user.server_access, user.role),
     avatar_data: user.avatar_data || "",
+    supported_team: user.supported_team || "",
+    supported_player: user.supported_player || "",
+    golden_boot_predictions: parseJsonField(user.golden_boot_predictions, []),
+    knockout_predictions: parseJsonField(user.knockout_predictions, { quarterfinalists: [], semifinalists: [], finalists: [], winner: "" }),
   } : null;
+}
+
+function requestServer(url, user = null) {
+  const requested = normalizeServer(url.searchParams.get("server"));
+  if (!user || user.role === "admin") return requested;
+  const access = parseServerAccess(user.server_access, user.role);
+  return access.includes(requested) ? requested : access[0];
 }
 
 async function requireUser(request, response) {
@@ -403,55 +539,93 @@ async function requireAdmin(request, response) {
   return user;
 }
 
-function settlement(match, bets, users, stake) {
+function settlement(match, bets, users, stake, server = "US") {
   const correct = match.result ? bets.filter((bet) => bet.pick === match.result) : [];
   const pool = bets.length * stake;
   const payoutEach = match.result && correct.length ? pool / correct.length : 0;
   return users.map((user) => {
     const bet = bets.find((row) => row.user_id === user.id);
     const won = Boolean(match.result && bet && bet.pick === match.result);
+    const settled = match.result && bet ? 1 : 0;
+    if (server === "India") {
+      const team1ScorePoint = settled
+        && bet.predicted_team1_score !== null
+        && Number(bet.predicted_team1_score) === Number(match.team1_score)
+        ? 1
+        : 0;
+      const team2ScorePoint = settled
+        && bet.predicted_team2_score !== null
+        && Number(bet.predicted_team2_score) === Number(match.team2_score)
+        ? 1
+        : 0;
+      const exactScoreBonus = team1ScorePoint && team2ScorePoint ? 3 : 0;
+      const points = (won ? 1 : 0) + team1ScorePoint + team2ScorePoint + exactScoreBonus;
+      return {
+        user_id: user.id,
+        payout: 0,
+        net: points,
+        points,
+        score_points: team1ScorePoint + team2ScorePoint + exactScoreBonus,
+        correct: won ? 1 : 0,
+        settled,
+      };
+    }
     const payout = won ? payoutEach : 0;
-    const net = match.result && bet ? payout - stake : 0;
-    return { user_id: user.id, payout, net, correct: won ? 1 : 0, settled: match.result && bet ? 1 : 0 };
+    const net = settled ? payout - stake : 0;
+    return { user_id: user.id, payout, net, points: won ? 1 : 0, correct: won ? 1 : 0, settled };
   });
 }
 
-async function appState(user = null) {
+async function appState(user = null, selectedServer = "US") {
+  const server = normalizeServer(selectedServer);
   const [settingsRows, matches, users, bets] = await Promise.all([
     runSql("SELECT key, value FROM settings;", true),
     runSql("SELECT * FROM matches ORDER BY id;", true),
-    runSql("SELECT id, login_id, display_name, role, avatar_data, is_active, created_at FROM users ORDER BY role, display_name;", true),
-    runSql("SELECT * FROM bets ORDER BY match_id, user_id;", true),
+    runSql("SELECT id, login_id, display_name, role, server_access, avatar_data, supported_team, supported_player, golden_boot_predictions, knockout_predictions, is_active, created_at FROM users ORDER BY role, display_name;", true),
+    runSql(`SELECT * FROM bets WHERE server = ${sqlValue(server)} ORDER BY match_id, user_id;`, true),
   ]);
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
   const stake = Number(settings.stake || 1);
-  const players = users.filter((row) => row.role === "player" && row.is_active);
+  const usersWithAccess = users.map((row) => ({ ...row, servers: parseServerAccess(row.server_access, row.role) }));
+  const players = usersWithAccess.filter((row) => row.role === "player" && row.is_active && row.servers.includes(server));
   const summaries = players.map((player) => ({
     user_id: player.id,
     login_id: player.login_id,
     display_name: player.display_name,
     avatar_data: player.avatar_data,
+    supported_team: player.supported_team || "",
+    supported_player: player.supported_player || "",
+    golden_boot_predictions: parseJsonField(player.golden_boot_predictions, []),
+    knockout_predictions: parseJsonField(player.knockout_predictions, { quarterfinalists: [], semifinalists: [], finalists: [], winner: "" }),
     bets_entered: 0,
     settled: 0,
     correct: 0,
+    score_points: 0,
     payout: 0,
     net: 0,
+    points: 0,
     roi: 0,
   }));
 
   const fixtures = matches.map((match) => {
     const matchBets = bets.filter((bet) => bet.match_id === match.id);
-    const rows = settlement(match, matchBets, players, stake);
+    const rows = settlement(match, matchBets, players, stake, server);
     rows.forEach((row) => {
       const summary = summaries.find((item) => item.user_id === row.user_id);
       const bet = matchBets.find((item) => item.user_id === row.user_id);
       if (bet) summary.bets_entered += 1;
       summary.settled += row.settled;
       summary.correct += row.correct;
+      summary.score_points += row.score_points || 0;
       summary.payout += row.payout;
       summary.net += row.net;
+      summary.points += row.points || 0;
     });
-    const publicBets = Object.fromEntries(matchBets.map((bet) => [bet.user_id, bet.pick]));
+    const publicBets = Object.fromEntries(matchBets.map((bet) => [bet.user_id, {
+      pick: bet.pick,
+      predictedTeam1Score: bet.predicted_team1_score,
+      predictedTeam2Score: bet.predicted_team2_score,
+    }]));
     return {
       id: match.id,
       stage: match.stage,
@@ -470,7 +644,8 @@ async function appState(user = null) {
       sourceUrl: match.source_url,
       locked: isLocked(match),
       bets: publicBets,
-      myPick: user ? publicBets[user.id] || "" : "",
+      myPick: user ? publicBets[user.id]?.pick || "" : "",
+      myPrediction: user ? publicBets[user.id] || null : null,
     };
   });
 
@@ -478,9 +653,27 @@ async function appState(user = null) {
     const staked = summary.settled * stake;
     summary.roi = staked ? summary.net / staked : 0;
   });
-  summaries.sort((a, b) => b.net - a.net || b.correct - a.correct || a.display_name.localeCompare(b.display_name));
+  summaries.sort((a, b) => server === "India"
+    ? b.points - a.points || b.correct - a.correct || a.display_name.localeCompare(b.display_name)
+    : b.net - a.net || b.correct - a.correct || a.display_name.localeCompare(b.display_name));
 
-  return { settings: { stake, lockMinutes: Number(settings.lock_minutes || 60) }, fixtures, users, players, leaderboard: summaries, sync: lastSyncStatus };
+  return {
+    settings: {
+      stake,
+      lockMinutes: Number(settings.lock_minutes || 60),
+      server,
+      serverLabel: server,
+      scoringMode: server === "India" ? "points" : "money",
+      servers,
+      predictionsLocked: tournamentPredictionsLocked(),
+      predictionLockAt,
+    },
+    fixtures,
+    users: usersWithAccess,
+    players,
+    leaderboard: summaries,
+    sync: lastSyncStatus,
+  };
 }
 
 async function syncSportsResults() {
@@ -786,12 +979,25 @@ async function router(request, response) {
       return;
     }
     const passwordSql = password ? `, password_hash = ${sqlValue(hashPassword(password))}` : "";
+    const predictionsLocked = tournamentPredictionsLocked();
+    const existingRows = await runSql(`SELECT golden_boot_predictions, knockout_predictions FROM users WHERE id = ${sqlValue(user.id)};`, true);
+    const existingProfile = existingRows[0] || {};
+    const goldenBootPredictions = predictionsLocked
+      ? existingProfile.golden_boot_predictions
+      : JSON.stringify(cleanJsonArray(body.goldenBootPredictions, 5));
+    const knockoutPredictions = predictionsLocked
+      ? existingProfile.knockout_predictions
+      : JSON.stringify(cleanKnockoutPredictions(body.knockoutPredictions));
     try {
       await runSql(`
         UPDATE users
         SET display_name = ${sqlValue(displayName)},
             login_id = ${sqlValue(loginId)},
-            avatar_data = ${sqlValue(avatarData)}
+            avatar_data = ${sqlValue(avatarData)},
+            supported_team = ${sqlValue(cleanText(body.supportedTeam))},
+            supported_player = ${sqlValue(cleanText(body.supportedPlayer))},
+            golden_boot_predictions = ${sqlValue(goldenBootPredictions)},
+            knockout_predictions = ${sqlValue(knockoutPredictions)}
             ${passwordSql}
         WHERE id = ${sqlValue(user.id)};
       `);
@@ -802,13 +1008,15 @@ async function router(request, response) {
       }
       throw error;
     }
-    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'profile.updated', ${sqlValue(JSON.stringify({ displayName, loginId, avatarUpdated: Boolean(avatarData), passwordUpdated: Boolean(password) }))});`);
-    sendJson(response, 200, { ok: true, user: publicUser((await currentUser(request))), state: await appState(await currentUser(request)) });
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'profile.updated', ${sqlValue(JSON.stringify({ displayName, loginId, avatarUpdated: Boolean(avatarData), passwordUpdated: Boolean(password), predictionsLocked }))});`);
+    const nextUser = await currentUser(request);
+    sendJson(response, 200, { ok: true, user: publicUser(nextUser), state: await appState(nextUser, requestServer(url, nextUser)) });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/state") {
-    sendJson(response, 200, await appState(await currentUser(request)));
+    const user = await currentUser(request);
+    sendJson(response, 200, await appState(user, requestServer(url, user)));
     return;
   }
 
@@ -825,6 +1033,9 @@ async function router(request, response) {
       return;
     }
     const body = await readBody(request);
+    const server = requestServer(new URL(`/?server=${encodeURIComponent(body.server || "")}`, `http://${request.headers.host}`), user);
+    const predictedTeam1Score = nullableScore(body.predictedTeam1Score);
+    const predictedTeam2Score = nullableScore(body.predictedTeam2Score);
     if (!["Team 1", "Team 2", "Draw"].includes(body.pick)) {
       sendJson(response, 400, { ok: false, error: "Invalid pick" });
       return;
@@ -840,12 +1051,16 @@ async function router(request, response) {
       return;
     }
     await runSql(`
-      INSERT INTO bets(user_id, match_id, pick, updated_at)
-      VALUES (${user.id}, ${match.id}, ${sqlValue(body.pick)}, CURRENT_TIMESTAMP)
-      ON CONFLICT(user_id, match_id) DO UPDATE SET pick = excluded.pick, updated_at = CURRENT_TIMESTAMP;
+      INSERT INTO bets(user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, updated_at)
+      VALUES (${user.id}, ${match.id}, ${sqlValue(server)}, ${sqlValue(body.pick)}, ${sqlValue(predictedTeam1Score)}, ${sqlValue(predictedTeam2Score)}, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, match_id, server) DO UPDATE SET
+        pick = excluded.pick,
+        predicted_team1_score = excluded.predicted_team1_score,
+        predicted_team2_score = excluded.predicted_team2_score,
+        updated_at = CURRENT_TIMESTAMP;
     `);
-    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'bet.saved', ${sqlValue(JSON.stringify(body))});`);
-    sendJson(response, 200, { ok: true, state: await appState(user) });
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'bet.saved', ${sqlValue(JSON.stringify({ ...body, server, predictedTeam1Score, predictedTeam2Score }))});`);
+    sendJson(response, 200, { ok: true, state: await appState(user, server) });
     return;
   }
 
@@ -858,10 +1073,10 @@ async function router(request, response) {
       return;
     }
     await runSql(`
-      INSERT INTO users(login_id, display_name, password_hash, role, is_active)
-      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(body.role === "admin" ? "admin" : "player")}, 1);
+      INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_active)
+      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(body.role === "admin" ? "admin" : "player")}, ${sqlValue(serverAccessValue(body.serverAccess, body.role))}, 1);
     `);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 
@@ -876,12 +1091,13 @@ async function router(request, response) {
       SET login_id = COALESCE(${sqlValue(body.loginId)}, login_id),
           display_name = COALESCE(${sqlValue(body.displayName)}, display_name),
           role = COALESCE(${body.role === "admin" ? "'admin'" : body.role === "player" ? "'player'" : "NULL"}, role),
+          server_access = COALESCE(${body.serverAccess === undefined ? "NULL" : sqlValue(serverAccessValue(body.serverAccess, body.role))}, server_access),
           is_active = COALESCE(${body.isActive === undefined ? "NULL" : sqlValue(body.isActive ? 1 : 0)}, is_active)
           ${passwordSql}
       WHERE id = ${sqlValue(id)};
     `);
     await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.user.updated', ${sqlValue(JSON.stringify({ id, ...body, password: body.password ? "[redacted]" : "" }))});`);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 
@@ -912,7 +1128,7 @@ async function router(request, response) {
       DELETE FROM users WHERE id = ${sqlValue(id)};
     `);
     await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.user.deleted', ${sqlValue(JSON.stringify(users[0]))});`);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 
@@ -926,7 +1142,7 @@ async function router(request, response) {
       INSERT INTO settings(key, value) VALUES ('lock_minutes', ${sqlValue(String(Number(body.lockMinutes || 60)))})
       ON CONFLICT(key) DO UPDATE SET value = excluded.value;
     `);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 
@@ -936,7 +1152,10 @@ async function router(request, response) {
     const body = await readBody(request);
     const userId = Number(body.userId);
     const matchId = Number(body.matchId);
+    const server = normalizeServer(body.server);
     const pick = String(body.pick || "");
+    const predictedTeam1Score = nullableScore(body.predictedTeam1Score);
+    const predictedTeam2Score = nullableScore(body.predictedTeam2Score);
     const [users, matches] = await Promise.all([
       runSql(`SELECT id, role FROM users WHERE id = ${sqlValue(userId)};`, true),
       runSql(`SELECT id FROM matches WHERE id = ${sqlValue(matchId)};`, true),
@@ -950,20 +1169,24 @@ async function router(request, response) {
       return;
     }
     if (!pick) {
-      await runSql(`DELETE FROM bets WHERE user_id = ${sqlValue(userId)} AND match_id = ${sqlValue(matchId)};`);
+      await runSql(`DELETE FROM bets WHERE user_id = ${sqlValue(userId)} AND match_id = ${sqlValue(matchId)} AND server = ${sqlValue(server)};`);
     } else {
       if (!["Team 1", "Team 2", "Draw"].includes(pick)) {
         sendJson(response, 400, { ok: false, error: "Invalid pick" });
         return;
       }
       await runSql(`
-        INSERT INTO bets(user_id, match_id, pick, updated_at)
-        VALUES (${sqlValue(userId)}, ${sqlValue(matchId)}, ${sqlValue(pick)}, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id, match_id) DO UPDATE SET pick = excluded.pick, updated_at = CURRENT_TIMESTAMP;
+        INSERT INTO bets(user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, updated_at)
+        VALUES (${sqlValue(userId)}, ${sqlValue(matchId)}, ${sqlValue(server)}, ${sqlValue(pick)}, ${sqlValue(predictedTeam1Score)}, ${sqlValue(predictedTeam2Score)}, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, match_id, server) DO UPDATE SET
+          pick = excluded.pick,
+          predicted_team1_score = excluded.predicted_team1_score,
+          predicted_team2_score = excluded.predicted_team2_score,
+          updated_at = CURRENT_TIMESTAMP;
       `);
     }
-    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.bet.updated', ${sqlValue(JSON.stringify({ userId, matchId, pick }))});`);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.bet.updated', ${sqlValue(JSON.stringify({ userId, matchId, server, pick, predictedTeam1Score, predictedTeam2Score }))});`);
+    sendJson(response, 200, { ok: true, state: await appState(admin, server) });
     return;
   }
 
@@ -995,7 +1218,7 @@ async function router(request, response) {
       );
     `);
     await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.match.created', ${sqlValue(JSON.stringify({ id, ...body }))});`);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 
@@ -1024,14 +1247,14 @@ async function router(request, response) {
       WHERE id = ${sqlValue(id)};
     `);
     await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${admin.id}, 'admin.match.updated', ${sqlValue(JSON.stringify({ id, ...body }))});`);
-    sendJson(response, 200, { ok: true, state: await appState(admin) });
+    sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/api/admin/sync-results") {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
-    sendJson(response, 200, { ok: true, ...(await runScheduledSync("manual")), state: await appState(admin) });
+    sendJson(response, 200, { ok: true, ...(await runScheduledSync("manual")), state: await appState(admin, requestServer(url, admin)) });
     return;
   }
 

@@ -67,6 +67,15 @@
         </section>
 
         <section id="adminContent">
+          <div class="command-toolbar">
+            <label>
+              Server
+              <select id="adminServerSwitch" class="server-switch" aria-label="Select server">
+                <option value="US">US</option>
+                <option value="India">India</option>
+              </select>
+            </label>
+          </div>
           <nav class="command-nav" aria-label="Command Center sections">
             <button class="command-tab active" data-admin-view="scores" type="button"><i data-lucide="trophy"></i>Match Scores</button>
             <button class="command-tab" data-admin-view="bets" type="button"><i data-lucide="list-checks"></i>Player Bets</button>
@@ -127,6 +136,8 @@
                   <option value="player">Player</option>
                   <option value="admin">Admin</option>
                 </select>
+                <label class="admin-check"><input name="serverAccess" type="checkbox" value="US" checked> US</label>
+                <label class="admin-check"><input name="serverAccess" type="checkbox" value="India"> India</label>
                 <button class="primary-button" type="submit"><i data-lucide="user-plus"></i>Create user</button>
               </form>
               <div class="compact-list" id="adminUsers"></div>

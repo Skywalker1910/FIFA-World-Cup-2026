@@ -25,13 +25,15 @@
           <button class="nav-tab" data-view="groups" type="button"><i data-lucide="table-2"></i>Groups</button>
           <button class="nav-tab" data-view="roadmap" type="button"><i data-lucide="git-merge"></i>Road To Final</button>
           <button class="nav-tab" data-view="players" type="button"><i data-lucide="users-round"></i>Players</button>
+          <button class="nav-tab" data-view="predictions" type="button"><i data-lucide="clipboard-list"></i>Predictions</button>
+          <button class="nav-tab profile-nav-tab" data-view="profile" type="button" hidden><i data-lucide="user-cog"></i>Profile</button>
+          <button class="nav-tab" data-view="rules" type="button"><i data-lucide="book-open-check"></i>Rules</button>
         </nav>
 
         <section class="settings-panel" aria-labelledby="settings-title">
           <h2 id="settings-title">Account</h2>
           <p id="accountLabel">Not signed in</p>
           <div class="button-stack">
-            <button id="profileButton" class="secondary-button" type="button" hidden><i data-lucide="user-cog"></i>Profile</button>
             <button id="logoutButton" class="secondary-button" type="button"><i data-lucide="log-out"></i>Logout</button>
           </div>
         </section>
@@ -44,6 +46,10 @@
             <h2 id="viewTitle">Dashboard</h2>
           </div>
           <div class="topbar-actions">
+            <select id="serverSwitch" class="server-switch" aria-label="Select server" hidden>
+              <option value="US">US</option>
+              <option value="India">India</option>
+            </select>
             <a id="adminSwitchButton" class="secondary-light-button" href="/admin" hidden><i data-lucide="shield-check"></i>Command Center</a>
             <button id="loginToggleButton" class="secondary-light-button" type="button"><i data-lucide="log-in"></i>Login</button>
             <div class="status-pill" id="saveStatus">Connecting</div>
@@ -168,8 +174,8 @@
                   <th>Result</th>
                   <th>Status</th>
                   <th>Bets</th>
-                  <th>Pool</th>
-                  <th>Rollover</th>
+                  <th id="poolHeader">Pool</th>
+                  <th id="rolloverHeader">Rollover</th>
                 </tr>
               </thead>
               <tbody id="fixturesTable"></tbody>
@@ -188,6 +194,42 @@
           <div class="player-grid" id="playerCards"></div>
         </section>
 
+        <section class="view" id="profileView">
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>Profile & Tournament Predictions</h3>
+              <span id="profileLockNotice">Update your public profile and tournament picks</span>
+            </div>
+            <form id="profilePageForm" class="profile-page-form">
+              <div class="profile-avatar-editor">
+                <div class="profile-avatar-preview" id="profilePageAvatarPreview" aria-hidden="true">26</div>
+                <label class="secondary-light-button profile-upload-button">
+                  <i data-lucide="image-up"></i>Upload photo
+                  <input id="profilePageAvatarInput" name="avatar" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                </label>
+              </div>
+              <div class="form-grid">
+                <input name="displayName" placeholder="Display name" autocomplete="name" required>
+                <input name="loginId" placeholder="Login ID" autocomplete="username" required>
+                <input name="password" placeholder="New password (optional)" type="password" autocomplete="new-password">
+                <select name="supportedTeam" id="supportedTeamSelect"></select>
+                <input name="supportedPlayer" placeholder="Player you support">
+              </div>
+              <div class="prediction-editor">
+                <h4>Golden Boot Predictions</h4>
+                <p>Select up to 5 players. This locks after the group stage.</p>
+                <div class="form-grid golden-grid" id="goldenBootFields"></div>
+              </div>
+              <div class="prediction-editor">
+                <h4>Knockout Predictions</h4>
+                <p>Predict 8 quarterfinalists, 4 semifinalists, 2 finalists, and the winner.</p>
+                <div class="form-grid knockout-grid" id="knockoutFields"></div>
+              </div>
+              <button class="primary-button" type="submit"><i data-lucide="save"></i>Save Profile</button>
+            </form>
+          </section>
+        </section>
+
         <section class="view" id="publicBetsView">
           <section class="panel">
             <div class="panel-heading">
@@ -200,6 +242,16 @@
                 <tbody id="publicBetsBody"></tbody>
               </table>
             </div>
+          </section>
+        </section>
+
+        <section class="view" id="predictionsView">
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>Tournament Predictions</h3>
+              <span>Public selections by player</span>
+            </div>
+            <div class="prediction-tables" id="predictionTables"></div>
           </section>
         </section>
 
@@ -230,6 +282,16 @@
               <span id="roadmapLabel"></span>
             </div>
             <div class="roadmap" id="roadmap"></div>
+          </section>
+        </section>
+
+        <section class="view" id="rulesView">
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>Rules & Help</h3>
+              <span id="rulesLabel">How to use this app</span>
+            </div>
+            <div class="rules-grid" id="rulesContent"></div>
           </section>
         </section>
       </main>

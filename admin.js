@@ -1,5 +1,6 @@
 let app = { user: null, state: null };
 let loginDismissed = false;
+let selectedServer = localStorage.getItem("selectedServer") || "US";
 
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
@@ -15,6 +16,7 @@ const elements = {
   createMatchForm: document.querySelector("#createMatchForm"),
   settingsForm: document.querySelector("#settingsForm"),
   syncResultsButton: document.querySelector("#syncResultsButton"),
+  adminServerSwitch: document.querySelector("#adminServerSwitch"),
   adminUsers: document.querySelector("#adminUsers"),
   adminMatches: document.querySelector("#adminMatches"),
   adminBets: document.querySelector("#adminBets"),
@@ -31,7 +33,11 @@ function escapeHtml(value) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  let requestPath = path;
+  if (path.startsWith("/api/admin/") && !path.includes("server=")) {
+    requestPath += `${path.includes("?") ? "&" : "?"}server=${encodeURIComponent(selectedServer)}`;
+  }
+  const response = await fetch(requestPath, {
     credentials: "same-origin",
     headers: { "content-type": "application/json", ...(options.headers || {}) },
     ...options,
@@ -50,10 +56,21 @@ function optionList(selected) {
   return ["", "Team 1", "Team 2", "Draw"].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${value || "-"}</option>`).join("");
 }
 
-function betPickList(selected) {
-  return ["", "Team 1", "Team 2", "Draw"].map((value) => (
-    `<option value="${value}" ${value === selected ? "selected" : ""}>${value || "No bet"}</option>`
+function betPickList(fixture, selected) {
+  const options = [
+    ["", "No bet"],
+    ["Team 1", fixture.team1],
+    ["Team 2", fixture.team2],
+    ["Draw", "Draw"],
+  ];
+  return options.map(([value, label]) => (
+    `<option value="${value}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`
   )).join("");
+}
+
+function predictionValue(bet, key) {
+  const value = bet?.[key];
+  return value === null || value === undefined ? "" : value;
 }
 
 function statusList(selected) {
@@ -70,6 +87,14 @@ function formatMoney(value) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value || 0));
 }
 
+function scoringMode() {
+  return app.state?.settings?.scoringMode || "money";
+}
+
+function scoreValue(value) {
+  return scoringMode() === "points" ? `${Number(value || 0)} pts` : formatMoney(value);
+}
+
 function setAdminView(view) {
   elements.commandTabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.adminView === view));
   elements.adminPages.forEach((page) => {
@@ -84,6 +109,7 @@ function closeLoginPanel() {
 }
 
 function ledgerRows() {
+  if (scoringMode() === "points") return { balances: [], rows: [] };
   const balances = app.state.leaderboard
     .map((player) => ({
       name: player.display_name,
@@ -118,7 +144,7 @@ function ledgerRows() {
 
 function renderAccount() {
   const isAdmin = app.user?.role === "admin";
-  elements.accountLabel.textContent = app.user ? `${app.user.display_name} (${app.user.role})` : "Not signed in";
+  elements.accountLabel.textContent = app.user ? `${app.user.display_name} (${app.user.role}) · ${app.state?.settings?.server || selectedServer}` : "Not signed in";
   elements.loginPanel.hidden = isAdmin || loginDismissed;
   elements.adminContent.style.display = isAdmin ? "" : "none";
   elements.logoutButton.style.display = app.user ? "" : "none";
@@ -127,13 +153,14 @@ function renderAccount() {
 
 function renderAdmin() {
   if (app.user?.role !== "admin" || !app.state) return;
+  elements.adminServerSwitch.value = app.state.settings.server;
   elements.settingsForm.stake.value = app.state.settings.stake;
   elements.settingsForm.lockMinutes.value = app.state.settings.lockMinutes;
   elements.adminUsers.innerHTML = app.state.users.map((user) => `
     <div class="compact-item admin-user" data-id="${user.id}">
       <div class="admin-item-title">
         <strong>${escapeHtml(user.display_name)}</strong>
-        <small>${escapeHtml(user.login_id)} / ${user.role === "admin" ? "Admin" : "Player"}</small>
+        <small>${escapeHtml(user.login_id)} / ${user.role === "admin" ? "Admin" : "Player"} / ${(user.servers || []).join(", ")}</small>
       </div>
       <input data-user-field="displayName" value="${escapeHtml(user.display_name)}" placeholder="Display name">
       <input data-user-field="loginId" value="${escapeHtml(user.login_id)}" placeholder="Login ID">
@@ -142,6 +169,8 @@ function renderAdmin() {
         <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
         <option value="player" ${user.role === "player" ? "selected" : ""}>Player</option>
       </select>
+      <label class="admin-check"><input data-user-server="US" type="checkbox" ${(user.servers || []).includes("US") ? "checked" : ""}> US</label>
+      <label class="admin-check"><input data-user-server="India" type="checkbox" ${(user.servers || []).includes("India") ? "checked" : ""}> India</label>
       <label class="admin-check"><input data-user-field="isActive" type="checkbox" ${user.is_active ? "checked" : ""}> Active</label>
       <button class="secondary-light-button" data-save-user="true" type="button">Save</button>
       <button class="danger-button admin-delete-button" data-delete-user="true" type="button" ${user.id === app.user?.id ? "disabled title=\"You cannot delete your own admin account\"" : ""}>Delete</button>
@@ -193,8 +222,13 @@ function renderAdmin() {
               <label class="admin-bet-pick-cell">
                 <span>${escapeHtml(player.display_name)}</span>
                 <select data-bet-pick data-user-id="${player.id}" aria-label="${escapeHtml(player.display_name)} pick for match ${fixture.id}">
-                  ${betPickList(fixture.bets[player.id])}
+                  ${betPickList(fixture, fixture.bets[player.id]?.pick)}
                 </select>
+                <div class="score-prediction">
+                  <input data-admin-score-team1 data-user-id="${player.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[player.id], "predictedTeam1Score"))}" placeholder="${escapeHtml(fixture.team1)}">
+                  <span>-</span>
+                  <input data-admin-score-team2 data-user-id="${player.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[player.id], "predictedTeam2Score"))}" placeholder="${escapeHtml(fixture.team2)}">
+                </div>
               </label>
             `).join("")}
           </div>
@@ -209,13 +243,13 @@ function renderAdmin() {
       ${app.state.leaderboard.map((player) => `
         <div class="ledger-balance ${Number(player.net) >= 0 ? "positive" : "negative"}">
           <strong>${escapeHtml(player.display_name)}</strong>
-          <span>${formatMoney(player.net)}</span>
+          <span>${scoreValue(scoringMode() === "points" ? player.points : player.net)}</span>
           <small>${player.correct} correct · ${player.bets_entered} bets</small>
         </div>
       `).join("")}
     </div>
     <div class="ledger-settlements">
-      ${ledger.rows.length ? ledger.rows.map((row) => `
+      ${scoringMode() === "points" ? `<div class="empty-state">India server uses points only. No cash ledger is required.</div>` : ledger.rows.length ? ledger.rows.map((row) => `
         <div class="ledger-row">
           <strong>${escapeHtml(row.from)}</strong>
           <span>pays</span>
@@ -234,9 +268,11 @@ function renderAll() {
 }
 
 async function refresh() {
-  const [me, state] = await Promise.all([api("/api/me"), api("/api/state")]);
+  const [me, state] = await Promise.all([api("/api/me"), api(`/api/state?server=${encodeURIComponent(selectedServer)}`)]);
   app.user = me.user;
   app.state = state;
+  selectedServer = state.settings.server;
+  localStorage.setItem("selectedServer", selectedServer);
   renderAll();
 }
 
@@ -269,10 +305,18 @@ elements.commandTabs.forEach((tab) => {
   tab.addEventListener("click", () => setAdminView(tab.dataset.adminView));
 });
 
+elements.adminServerSwitch.addEventListener("change", async () => {
+  selectedServer = elements.adminServerSwitch.value;
+  localStorage.setItem("selectedServer", selectedServer);
+  await refresh();
+});
+
 elements.createUserForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    const data = Object.fromEntries(new FormData(elements.createUserForm));
+    const formData = new FormData(elements.createUserForm);
+    const data = Object.fromEntries(formData);
+    data.serverAccess = formData.getAll("serverAccess");
     const payload = await api("/api/admin/users", { method: "POST", body: JSON.stringify(data) });
     app.state = payload.state;
     elements.createUserForm.reset();
@@ -344,6 +388,7 @@ elements.adminUsers.addEventListener("click", async (event) => {
     row.querySelectorAll("[data-user-field]").forEach((input) => {
       values[input.dataset.userField] = input.type === "checkbox" ? input.checked : input.value;
     });
+    values.serverAccess = [...row.querySelectorAll("[data-user-server]:checked")].map((input) => input.dataset.userServer);
     const payload = await api(`/api/admin/users/${row.dataset.id}`, { method: "PATCH", body: JSON.stringify(values) });
     app.state = payload.state;
     setStatus("User saved");
@@ -360,12 +405,16 @@ elements.adminBets.addEventListener("click", async (event) => {
   try {
     let nextState = app.state;
     for (const select of row.querySelectorAll("[data-bet-pick]")) {
+      const userId = select.dataset.userId;
       const payload = await api("/api/admin/bets", {
         method: "POST",
         body: JSON.stringify({
           matchId: row.dataset.matchId,
-          userId: select.dataset.userId,
+          userId,
+          server: selectedServer,
           pick: select.value,
+          predictedTeam1Score: row.querySelector(`[data-admin-score-team1][data-user-id="${CSS.escape(userId)}"]`)?.value || "",
+          predictedTeam2Score: row.querySelector(`[data-admin-score-team2][data-user-id="${CSS.escape(userId)}"]`)?.value || "",
         }),
       });
       nextState = payload.state;
