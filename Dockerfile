@@ -10,6 +10,7 @@ COPY package.json ./
 RUN npm install --omit=dev
 
 COPY server.js app.js admin.js index.html admin.html styles.css README.md ./
+COPY assets ./assets
 COPY data/fixtures.js ./data/fixtures.js
 COPY scripts ./scripts
 
