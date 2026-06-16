@@ -2756,6 +2756,37 @@ body::after,
   min-height: 34px;
 }
 
+.brand-mark {
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #ffffff;
+  color: transparent;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  padding: 3px;
+}
+
+.fixture-table td:nth-child(4),
+.fixture-table td:nth-child(4) strong {
+  min-width: 72px;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.fixture-table td:nth-child(4) strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+
 .prediction-flag-grid .team-badge {
   border: 0;
   background: #ffffff;
@@ -3678,13 +3709,120 @@ input::placeholder {
   padding-bottom: 8px;
 }
 
+.admin-bets-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 18px;
+  background: #f5f5f7;
+  padding: 14px 16px;
+}
+
+.admin-bets-overview strong {
+  white-space: nowrap;
+}
+
+.admin-bets-overview p {
+  flex: 1;
+  margin: 0;
+  color: #6e6e73;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.admin-bets-overview div {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.admin-bets-overview span,
+.server-section-kicker {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #e8e8ed;
+  color: #1d1d1f;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-server-bets {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 28px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 18px;
+}
+
+.admin-server-bets:last-child {
+  margin-bottom: 0;
+}
+
+.admin-server-bets-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding-bottom: 10px;
+}
+
+.admin-server-bets-heading h4 {
+  margin: 6px 0 0;
+  font-size: 20px;
+}
+
+.admin-server-bets-heading span {
+  color: #6e6e73;
+  font-size: 13px;
+}
+
+.admin-player-bet-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 16px;
+  align-items: end;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 18px;
+  background: #f5f5f7;
+  padding: 14px;
+}
+
+.admin-player-bet-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-player-bet-toolbar select {
+  min-height: 42px;
+  border-color: rgba(0, 0, 0, 0.1);
+  background: #ffffff;
+  color: #1d1d1f;
+  font-size: 15px;
+}
+
+.admin-player-bet-toolbar p {
+  margin: 0;
+  color: #6e6e73;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .admin-bets-header,
 .admin-bets-row {
   display: grid;
-  grid-template-columns: 320px minmax(420px, 1fr) 116px;
+  grid-template-columns: minmax(280px, 1.2fr) minmax(360px, 1.6fr) 96px;
   gap: 16px;
   align-items: center;
-  min-width: 860px;
+  min-width: 760px;
 }
 
 .admin-bets-header {
@@ -3700,8 +3838,7 @@ input::placeholder {
   letter-spacing: 0.04em;
 }
 
-.admin-bets-header > strong,
-.admin-bet-picks-grid strong {
+.admin-bets-header > strong {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -3714,33 +3851,38 @@ input::placeholder {
   border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.admin-bet-picks-grid {
+.admin-single-bet-cell {
   display: grid;
-  grid-template-columns: repeat(var(--player-count), minmax(150px, 1fr));
-  gap: 10px;
-  align-items: center;
-}
-
-.admin-bets-header .admin-bet-picks-grid {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr);
+  gap: 12px;
   align-items: end;
 }
 
-.admin-bet-pick-cell {
+.admin-single-bet-cell label {
   display: grid;
   gap: 6px;
   min-width: 0;
 }
 
-.admin-bet-pick-cell span {
-  display: none;
+.admin-single-bet-cell label > span {
   color: #6e6e73;
   font-size: 12px;
   font-weight: 600;
 }
 
-.admin-bet-picks-grid select {
+.admin-single-bet-cell select {
   width: 100%;
-  min-width: 150px;
+}
+
+.admin-single-bet-cell .score-prediction {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) 12px minmax(80px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-single-bet-cell .score-prediction input {
+  min-width: 0;
 }
 
 .admin-page[data-admin-page="players"] .form-grid,
@@ -3853,11 +3995,23 @@ input::placeholder {
     padding: 16px 0;
   }
 
-  .admin-bet-picks-grid {
+  .admin-player-bet-toolbar,
+  .admin-single-bet-cell {
     grid-template-columns: 1fr;
   }
+}
 
-  .admin-bet-pick-cell span {
-    display: block;
-  }
+/* Final app branding and score-cell overrides */
+.fixture-table td:nth-child(4),
+.fixture-table td:nth-child(4) strong {
+  min-width: 72px;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.fixture-table td:nth-child(4) strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
 }

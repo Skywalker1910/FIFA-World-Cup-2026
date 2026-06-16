@@ -1,6 +1,7 @@
-let app = { user: null, state: null };
+let app = { user: null, state: null, serverStates: {} };
 let loginDismissed = false;
 let selectedServer = localStorage.getItem("selectedServer") || "US";
+let selectedBetPlayerId = localStorage.getItem("selectedBetPlayerId") || "";
 
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
@@ -91,11 +92,16 @@ function scoringMode() {
   return app.state?.settings?.scoringMode || "money";
 }
 
+function isFullAdmin() {
+  return app.user?.role === "admin" && (app.user.servers || []).length > 1;
+}
+
 function scoreValue(value) {
   return scoringMode() === "points" ? `${Number(value || 0)} pts` : formatMoney(value);
 }
 
 function setAdminView(view) {
+  if (!isFullAdmin() && ["scores", "settings"].includes(view)) view = "bets";
   elements.commandTabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.adminView === view));
   elements.adminPages.forEach((page) => {
     page.hidden = page.dataset.adminPage !== view;
@@ -151,11 +157,104 @@ function renderAccount() {
   setStatus(isAdmin ? "Admin connected" : "Admin login required");
 }
 
+function renderAdminBetsTable(server, state) {
+  const players = state.users.filter((user) => user.role === "player" && user.is_active && (user.servers || []).includes(server));
+  if (players.length && !players.some((player) => String(player.id) === String(selectedBetPlayerId))) {
+    selectedBetPlayerId = String(players[0].id);
+    localStorage.setItem("selectedBetPlayerId", selectedBetPlayerId);
+  }
+  const selectedPlayer = players.find((player) => String(player.id) === String(selectedBetPlayerId));
+  return `
+    <section class="admin-server-bets" data-bets-server-section="${escapeHtml(server)}">
+      <div class="admin-server-bets-heading">
+        <div>
+          <span class="server-section-kicker">${escapeHtml(server)} server</span>
+          <h4>${escapeHtml(server)} Player Bets</h4>
+        </div>
+        <span>${players.length} players · ${state.fixtures.length} matches</span>
+      </div>
+      ${players.length ? "" : `<div class="empty-state">No active players are assigned to the ${escapeHtml(server)} server yet.</div>`}
+      ${players.length ? `
+        <div class="admin-player-bet-toolbar">
+          <label>
+            <span>Editing player</span>
+            <select data-admin-bet-player>
+              ${players.map((player) => `
+                <option value="${player.id}" ${String(player.id) === String(selectedBetPlayerId) ? "selected" : ""}>
+                  ${escapeHtml(player.display_name)}
+                </option>
+              `).join("")}
+            </select>
+          </label>
+          <p>Only this player’s bets are shown below. Change the player from this dropdown to edit another record set.</p>
+        </div>
+      ` : ""}
+      <div class="admin-bets-table" data-server="${escapeHtml(server)}">
+        <div class="admin-bets-header">
+          <strong>Match</strong>
+          <strong>${selectedPlayer ? escapeHtml(selectedPlayer.display_name) : "Player bet"}</strong>
+          <strong>Action</strong>
+        </div>
+        ${state.fixtures.map((fixture) => `
+          <div class="admin-bets-row" data-match-id="${fixture.id}" data-server="${escapeHtml(server)}">
+            <div class="admin-match-summary">
+              <strong>#${fixture.id} ${escapeHtml(fixture.team1)} vs ${escapeHtml(fixture.team2)}</strong>
+              <small>${dateLabel(fixture.date)} · ${escapeHtml(fixture.stage || "")} ${escapeHtml(fixture.group || "")}</small>
+            </div>
+            <div class="admin-single-bet-cell">
+              ${selectedPlayer ? `
+                <label>
+                  <span>Pick</span>
+                  <select data-bet-pick data-user-id="${selectedPlayer.id}" aria-label="${escapeHtml(selectedPlayer.display_name)} pick for match ${fixture.id}">
+                    ${betPickList(fixture, fixture.bets[selectedPlayer.id]?.pick)}
+                  </select>
+                </label>
+                <label>
+                  <span>Score prediction</span>
+                  <div class="score-prediction">
+                    <input data-admin-score-team1 data-user-id="${selectedPlayer.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[selectedPlayer.id], "predictedTeam1Score"))}" placeholder="${escapeHtml(fixture.team1)}">
+                    <span>-</span>
+                    <input data-admin-score-team2 data-user-id="${selectedPlayer.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[selectedPlayer.id], "predictedTeam2Score"))}" placeholder="${escapeHtml(fixture.team2)}">
+                  </div>
+                </label>
+              ` : `<div class="empty-state">Select a player to edit bets.</div>`}
+            </div>
+            <button class="secondary-light-button" data-save-bet-row="true" type="button" ${selectedPlayer ? "" : "disabled"}>Save</button>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderAdmin() {
   if (app.user?.role !== "admin" || !app.state) return;
+  elements.commandTabs.forEach((tab) => {
+    tab.hidden = !isFullAdmin() && ["scores", "settings"].includes(tab.dataset.adminView);
+  });
+  if (!isFullAdmin() && !["bets", "players", "ledger"].includes(document.querySelector(".command-tab.active")?.dataset.adminView)) {
+    setAdminView("bets");
+  }
+  const accessibleServers = app.user.servers || ["US"];
+  const betServerList = accessibleServers.map((server) => `<span>${escapeHtml(server)}</span>`).join("");
+  const activeBetServer = accessibleServers.includes(selectedServer) ? selectedServer : accessibleServers[0];
+  const activeBetState = app.serverStates[activeBetServer] || app.state;
+  elements.adminServerSwitch.innerHTML = accessibleServers.map((server) => `<option value="${escapeHtml(server)}">${escapeHtml(server)}</option>`).join("");
   elements.adminServerSwitch.value = app.state.settings.server;
   elements.settingsForm.stake.value = app.state.settings.stake;
   elements.settingsForm.lockMinutes.value = app.state.settings.lockMinutes;
+  elements.createUserForm.hidden = false;
+  const createRole = elements.createUserForm.querySelector('[name="role"]');
+  const createServerChecks = [...elements.createUserForm.querySelectorAll('[name="serverAccess"]')];
+  if (createRole) {
+    createRole.value = isFullAdmin() ? createRole.value : "player";
+    createRole.disabled = !isFullAdmin();
+  }
+  createServerChecks.forEach((checkbox) => {
+    const allowed = isFullAdmin() || accessibleServers.includes(checkbox.value);
+    checkbox.checked = isFullAdmin() ? checkbox.checked : accessibleServers.includes(checkbox.value);
+    checkbox.disabled = !allowed || !isFullAdmin();
+  });
   elements.adminUsers.innerHTML = app.state.users.map((user) => `
     <div class="compact-item admin-user" data-id="${user.id}">
       <div class="admin-item-title">
@@ -165,15 +264,17 @@ function renderAdmin() {
       <input data-user-field="displayName" value="${escapeHtml(user.display_name)}" placeholder="Display name">
       <input data-user-field="loginId" value="${escapeHtml(user.login_id)}" placeholder="Login ID">
       <input data-user-field="password" type="password" placeholder="New password">
-      <select data-user-field="role">
+      <select data-user-field="role" ${isFullAdmin() ? "" : "disabled"}>
         <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
         <option value="player" ${user.role === "player" ? "selected" : ""}>Player</option>
       </select>
-      <label class="admin-check"><input data-user-server="US" type="checkbox" ${(user.servers || []).includes("US") ? "checked" : ""}> US</label>
-      <label class="admin-check"><input data-user-server="India" type="checkbox" ${(user.servers || []).includes("India") ? "checked" : ""}> India</label>
+      ${isFullAdmin() ? `
+        <label class="admin-check"><input data-user-server="US" type="checkbox" ${(user.servers || []).includes("US") ? "checked" : ""}> US</label>
+        <label class="admin-check"><input data-user-server="India" type="checkbox" ${(user.servers || []).includes("India") ? "checked" : ""}> India</label>
+      ` : `<span class="admin-check">${(user.servers || []).join(", ")}</span>`}
       <label class="admin-check"><input data-user-field="isActive" type="checkbox" ${user.is_active ? "checked" : ""}> Active</label>
       <button class="secondary-light-button" data-save-user="true" type="button">Save</button>
-      <button class="danger-button admin-delete-button" data-delete-user="true" type="button" ${user.id === app.user?.id ? "disabled title=\"You cannot delete your own admin account\"" : ""}>Delete</button>
+      ${isFullAdmin() ? `<button class="danger-button admin-delete-button" data-delete-user="true" type="button" ${user.id === app.user?.id ? "disabled title=\"You cannot delete your own admin account\"" : ""}>Delete</button>` : ""}
     </div>
   `).join("");
   elements.adminMatches.innerHTML = app.state.fixtures.map((fixture) => `
@@ -197,45 +298,13 @@ function renderAdmin() {
       <button class="secondary-light-button" data-save-match="true" type="button">Save</button>
     </div>
   `).join("");
-  const players = app.state.users.filter((user) => user.role === "player" && user.is_active);
   elements.adminBets.innerHTML = `
-    <div class="admin-bets-table">
-      <div class="admin-bets-header">
-        <strong>Match</strong>
-        <div class="admin-bet-picks-grid" style="--player-count: ${players.length}">
-          ${players.map((player) => `
-            <strong title="${escapeHtml(player.display_name)}">
-              ${escapeHtml(player.display_name)}
-            </strong>
-          `).join("")}
-        </div>
-        <strong>Action</strong>
-      </div>
-      ${app.state.fixtures.map((fixture) => `
-        <div class="admin-bets-row" data-match-id="${fixture.id}">
-          <div class="admin-match-summary">
-            <strong>#${fixture.id} ${escapeHtml(fixture.team1)} vs ${escapeHtml(fixture.team2)}</strong>
-            <small>${dateLabel(fixture.date)} · ${escapeHtml(fixture.stage || "")} ${escapeHtml(fixture.group || "")}</small>
-          </div>
-          <div class="admin-bet-picks-grid" style="--player-count: ${players.length}">
-            ${players.map((player) => `
-              <label class="admin-bet-pick-cell">
-                <span>${escapeHtml(player.display_name)}</span>
-                <select data-bet-pick data-user-id="${player.id}" aria-label="${escapeHtml(player.display_name)} pick for match ${fixture.id}">
-                  ${betPickList(fixture, fixture.bets[player.id]?.pick)}
-                </select>
-                <div class="score-prediction">
-                  <input data-admin-score-team1 data-user-id="${player.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[player.id], "predictedTeam1Score"))}" placeholder="${escapeHtml(fixture.team1)}">
-                  <span>-</span>
-                  <input data-admin-score-team2 data-user-id="${player.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[player.id], "predictedTeam2Score"))}" placeholder="${escapeHtml(fixture.team2)}">
-                </div>
-              </label>
-            `).join("")}
-          </div>
-          <button class="secondary-light-button" data-save-bet-row="true" type="button">Save Row</button>
-        </div>
-      `).join("")}
+    <div class="admin-bets-overview">
+      <strong>${escapeHtml(activeBetServer)} bet table</strong>
+      <p>Use the server switch above to load the US or India bet table. Each server writes to its own bet records.</p>
+      <div>${betServerList}</div>
     </div>
+    ${renderAdminBetsTable(activeBetServer, activeBetState)}
   `;
   const ledger = ledgerRows();
   elements.adminLedger.innerHTML = `
@@ -268,10 +337,14 @@ function renderAll() {
 }
 
 async function refresh() {
-  const [me, state] = await Promise.all([api("/api/me"), api(`/api/state?server=${encodeURIComponent(selectedServer)}`)]);
+  const me = await api("/api/me");
   app.user = me.user;
-  app.state = state;
-  selectedServer = state.settings.server;
+  const accessibleServers = app.user?.servers?.length ? app.user.servers : ["US"];
+  if (!accessibleServers.includes(selectedServer)) selectedServer = accessibleServers[0];
+  const states = await Promise.all(accessibleServers.map((server) => api(`/api/state?server=${encodeURIComponent(server)}`)));
+  app.serverStates = Object.fromEntries(accessibleServers.map((server, index) => [server, states[index]]));
+  app.state = app.serverStates[selectedServer] || states[0];
+  selectedServer = app.state.settings.server;
   localStorage.setItem("selectedServer", selectedServer);
   renderAll();
 }
@@ -307,8 +380,18 @@ elements.commandTabs.forEach((tab) => {
 
 elements.adminServerSwitch.addEventListener("change", async () => {
   selectedServer = elements.adminServerSwitch.value;
+  selectedBetPlayerId = "";
+  localStorage.removeItem("selectedBetPlayerId");
   localStorage.setItem("selectedServer", selectedServer);
   await refresh();
+});
+
+elements.adminBets.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-admin-bet-player]");
+  if (!select) return;
+  selectedBetPlayerId = select.value;
+  localStorage.setItem("selectedBetPlayerId", selectedBetPlayerId);
+  renderAll();
 });
 
 elements.createUserForm.addEventListener("submit", async (event) => {
@@ -316,7 +399,8 @@ elements.createUserForm.addEventListener("submit", async (event) => {
   try {
     const formData = new FormData(elements.createUserForm);
     const data = Object.fromEntries(formData);
-    data.serverAccess = formData.getAll("serverAccess");
+    data.role = isFullAdmin() ? data.role : "player";
+    data.serverAccess = isFullAdmin() ? formData.getAll("serverAccess") : (app.user?.servers || ["US"]);
     const payload = await api("/api/admin/users", { method: "POST", body: JSON.stringify(data) });
     app.state = payload.state;
     elements.createUserForm.reset();
@@ -402,25 +486,27 @@ elements.adminBets.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-save-bet-row]");
   if (!button) return;
   const row = button.closest(".admin-bets-row");
+  const rowServer = row.dataset.server || selectedServer;
   try {
     let nextState = app.state;
-    for (const select of row.querySelectorAll("[data-bet-pick]")) {
-      const userId = select.dataset.userId;
-      const payload = await api("/api/admin/bets", {
-        method: "POST",
-        body: JSON.stringify({
-          matchId: row.dataset.matchId,
-          userId,
-          server: selectedServer,
-          pick: select.value,
-          predictedTeam1Score: row.querySelector(`[data-admin-score-team1][data-user-id="${CSS.escape(userId)}"]`)?.value || "",
-          predictedTeam2Score: row.querySelector(`[data-admin-score-team2][data-user-id="${CSS.escape(userId)}"]`)?.value || "",
-        }),
-      });
-      nextState = payload.state;
-    }
-    app.state = nextState;
-    setStatus(`Bet saved for match #${row.dataset.matchId}`);
+    const select = row.querySelector("[data-bet-pick]");
+    if (!select) return;
+    const userId = select.dataset.userId;
+    const payload = await api("/api/admin/bets", {
+      method: "POST",
+      body: JSON.stringify({
+        matchId: row.dataset.matchId,
+        userId,
+        server: rowServer,
+        pick: select.value,
+        predictedTeam1Score: row.querySelector(`[data-admin-score-team1][data-user-id="${CSS.escape(userId)}"]`)?.value || "",
+        predictedTeam2Score: row.querySelector(`[data-admin-score-team2][data-user-id="${CSS.escape(userId)}"]`)?.value || "",
+      }),
+    });
+    nextState = payload.state;
+    app.serverStates[rowServer] = nextState;
+    if (rowServer === selectedServer) app.state = nextState;
+    setStatus(`${rowServer} bet saved for match #${row.dataset.matchId}`);
     renderAll();
   } catch (error) {
     setStatus(error.message);

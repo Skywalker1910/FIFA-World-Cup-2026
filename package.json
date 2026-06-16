@@ -2,7 +2,7 @@
   "name": "world-cup-2026-bet-tracker",
   "version": "1.0.0",
   "private": true,
-  "description": "SQLite-backed World Cup 2026 bet tracker.",
+  "description": "SQLite-backed FIFA World Cup 2026 prediction app.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

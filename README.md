@@ -1,4 +1,4 @@
-# World Cup 2026 Bet Tracker
+# FIFA World Cup 2026
 
 SQLite-backed local web app for World Cup betting, admin-created player logins, bet placement, public profiles, leaderboard tracking, and optional sports API result sync.
 

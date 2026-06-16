@@ -90,6 +90,10 @@ const initialPlayers = [
   { displayName: "Mith", loginId: "MithileshBiradar", password: "Player@2", sourceInitial: "M" },
   { displayName: "TBD", loginId: "ShardulVartak", password: "Player@3", sourceInitial: "S" },
 ];
+const defaultAdmins = [
+  { displayName: "Admin", loginId: "admin", password: "admin123", serverAccess: "US,India" },
+  { displayName: "US Admin", loginId: "usadmin", password: "usadmin123", serverAccess: "US" },
+];
 const servers = ["US", "India"];
 
 function normalizeServer(value) {
@@ -97,16 +101,21 @@ function normalizeServer(value) {
 }
 
 function parseServerAccess(value, role = "player") {
-  if (role === "admin") return servers;
-  const access = String(value || "US")
+  const fallback = role === "admin" ? "US,India" : "US";
+  const access = String(value || fallback)
     .split(",")
     .map((item) => normalizeServer(item.trim()))
     .filter((item, index, list) => item && list.indexOf(item) === index);
-  return access.length ? access : ["US"];
+  return access.length ? access : parseServerAccess(fallback);
 }
 
 function serverAccessValue(value, role = "player") {
-  return parseServerAccess(Array.isArray(value) ? value.join(",") : value, role).join(",");
+  const requested = Array.isArray(value) ? value.join(",") : value;
+  return parseServerAccess(requested, role).join(",");
+}
+
+function isFullAdmin(user) {
+  return user?.role === "admin" && parseServerAccess(user.server_access, user.role).length === servers.length;
 }
 
 function nullableScore(value) {
@@ -381,7 +390,7 @@ async function initDb() {
     if (!String(error.message).includes("duplicate column name")) throw error;
   }
   await runSql(`
-    UPDATE users SET server_access = 'US,India' WHERE role = 'admin';
+    UPDATE users SET server_access = 'US,India' WHERE role = 'admin' AND (server_access IS NULL OR server_access = '');
     UPDATE users SET server_access = 'US' WHERE role = 'player' AND (server_access IS NULL OR server_access = '');
   `);
 
@@ -419,13 +428,7 @@ async function initDb() {
     await runSql("ALTER TABLE bets ADD COLUMN predicted_team2_score INTEGER;");
   }
 
-  const adminCount = await runSql("SELECT COUNT(*) AS count FROM users WHERE role = 'admin';", true);
-  if (!adminCount[0].count) {
-    await runSql(`
-      INSERT INTO users(login_id, display_name, password_hash, role, server_access)
-      VALUES ('admin', 'Admin', ${sqlValue(hashPassword("admin123"))}, 'admin', 'US,India');
-    `);
-  }
+  await seedDefaultAdmins();
 
   const matchCount = await runSql("SELECT COUNT(*) AS count FROM matches;", true);
   if (!matchCount[0].count) {
@@ -445,6 +448,18 @@ async function initDb() {
   await runSql("UPDATE matches SET match_status = 'FT' WHERE result IS NOT NULL AND (match_status IS NULL OR match_status = '');");
 
   await seedInitialPlayers();
+}
+
+async function seedDefaultAdmins() {
+  const adminSql = defaultAdmins.map((admin) => `
+    INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_active)
+    VALUES (${sqlValue(admin.loginId)}, ${sqlValue(admin.displayName)}, ${sqlValue(hashPassword(admin.password))}, 'admin', ${sqlValue(admin.serverAccess)}, 1)
+    ON CONFLICT(login_id) DO UPDATE SET
+      role = 'admin',
+      server_access = excluded.server_access,
+      is_active = 1;
+  `).join("\n");
+  await runSql(adminSql);
 }
 
 async function seedInitialPlayers() {
@@ -515,7 +530,7 @@ function publicUser(user) {
 
 function requestServer(url, user = null) {
   const requested = normalizeServer(url.searchParams.get("server"));
-  if (!user || user.role === "admin") return requested;
+  if (!user) return requested;
   const access = parseServerAccess(user.server_access, user.role);
   return access.includes(requested) ? requested : access[0];
 }
@@ -537,6 +552,18 @@ async function requireAdmin(request, response) {
     return null;
   }
   return user;
+}
+
+function requireFullAdmin(admin, response) {
+  if (isFullAdmin(admin)) return true;
+  sendJson(response, 403, { ok: false, error: "Full admin access required" });
+  return false;
+}
+
+function requireAdminServer(admin, server, response) {
+  if (parseServerAccess(admin.server_access, admin.role).includes(server)) return true;
+  sendJson(response, 403, { ok: false, error: `Admin access to ${server} is required` });
+  return false;
 }
 
 function settlement(match, bets, users, stake, server = "US") {
@@ -586,7 +613,10 @@ async function appState(user = null, selectedServer = "US") {
   ]);
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
   const stake = Number(settings.stake || 1);
-  const usersWithAccess = users.map((row) => ({ ...row, servers: parseServerAccess(row.server_access, row.role) }));
+  const allUsersWithAccess = users.map((row) => ({ ...row, servers: parseServerAccess(row.server_access, row.role) }));
+  const usersWithAccess = user?.role === "admin" && !isFullAdmin(user)
+    ? allUsersWithAccess.filter((row) => row.id === user.id || (row.role === "player" && row.servers.includes(server)))
+    : allUsersWithAccess;
   const players = usersWithAccess.filter((row) => row.role === "player" && row.is_active && row.servers.includes(server));
   const summaries = players.map((player) => ({
     user_id: player.id,
@@ -1072,9 +1102,18 @@ async function router(request, response) {
       sendJson(response, 400, { ok: false, error: "Login ID, display name, and password are required" });
       return;
     }
+    const fullAdmin = isFullAdmin(admin);
+    const role = fullAdmin && body.role === "admin" ? "admin" : "player";
+    const serverAccess = fullAdmin
+      ? serverAccessValue(body.serverAccess, role)
+      : parseServerAccess(admin.server_access, admin.role).join(",");
+    if (!fullAdmin && role !== "player") {
+      sendJson(response, 403, { ok: false, error: "Sub-admins can only create player accounts" });
+      return;
+    }
     await runSql(`
       INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_active)
-      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(body.role === "admin" ? "admin" : "player")}, ${sqlValue(serverAccessValue(body.serverAccess, body.role))}, 1);
+      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(role)}, ${sqlValue(serverAccess)}, 1);
     `);
     sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
@@ -1085,6 +1124,22 @@ async function router(request, response) {
     if (!admin) return;
     const id = Number(url.pathname.split("/").pop());
     const body = await readBody(request);
+    const targetRows = await runSql(`SELECT id, role, server_access FROM users WHERE id = ${sqlValue(id)};`, true);
+    const targetUser = targetRows[0];
+    if (!targetUser) {
+      sendJson(response, 404, { ok: false, error: "User not found" });
+      return;
+    }
+    if (!isFullAdmin(admin)) {
+      const adminServers = parseServerAccess(admin.server_access, admin.role);
+      const targetServers = parseServerAccess(targetUser.server_access, targetUser.role);
+      if (targetUser.role !== "player" || !targetServers.some((server) => adminServers.includes(server))) {
+        sendJson(response, 403, { ok: false, error: "You can only update player records in your assigned server" });
+        return;
+      }
+      delete body.role;
+      delete body.serverAccess;
+    }
     const passwordSql = body.password ? `, password_hash = ${sqlValue(hashPassword(body.password))}` : "";
     await runSql(`
       UPDATE users
@@ -1107,6 +1162,7 @@ async function router(request, response) {
   ) {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
+    if (!requireFullAdmin(admin, response)) return;
     const parts = url.pathname.split("/");
     const id = Number(request.method === "POST" ? parts.at(-2) : parts.at(-1));
     if (!Number.isFinite(id)) {
@@ -1135,6 +1191,7 @@ async function router(request, response) {
   if (request.method === "POST" && url.pathname === "/api/admin/settings") {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
+    if (!requireFullAdmin(admin, response)) return;
     const body = await readBody(request);
     await runSql(`
       INSERT INTO settings(key, value) VALUES ('stake', ${sqlValue(String(Number(body.stake || 1)))})
@@ -1153,15 +1210,20 @@ async function router(request, response) {
     const userId = Number(body.userId);
     const matchId = Number(body.matchId);
     const server = normalizeServer(body.server);
+    if (!requireAdminServer(admin, server, response)) return;
     const pick = String(body.pick || "");
     const predictedTeam1Score = nullableScore(body.predictedTeam1Score);
     const predictedTeam2Score = nullableScore(body.predictedTeam2Score);
     const [users, matches] = await Promise.all([
-      runSql(`SELECT id, role FROM users WHERE id = ${sqlValue(userId)};`, true),
+      runSql(`SELECT id, role, server_access FROM users WHERE id = ${sqlValue(userId)};`, true),
       runSql(`SELECT id FROM matches WHERE id = ${sqlValue(matchId)};`, true),
     ]);
     if (!users[0] || users[0].role !== "player") {
       sendJson(response, 400, { ok: false, error: "Bet must belong to a player account" });
+      return;
+    }
+    if (!parseServerAccess(users[0].server_access, users[0].role).includes(server)) {
+      sendJson(response, 400, { ok: false, error: `Player is not assigned to ${server}` });
       return;
     }
     if (!matches[0]) {
@@ -1193,6 +1255,7 @@ async function router(request, response) {
   if (request.method === "POST" && url.pathname === "/api/admin/matches") {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
+    if (!requireFullAdmin(admin, response)) return;
     const body = await readBody(request);
     if (!body.team1 || !body.team2) {
       sendJson(response, 400, { ok: false, error: "Team 1 and Team 2 are required" });
@@ -1225,6 +1288,7 @@ async function router(request, response) {
   if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/matches/")) {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
+    if (!requireFullAdmin(admin, response)) return;
     const id = Number(url.pathname.split("/").pop());
     const body = await readBody(request);
     const kickoffAt = parseKickoffUtc(body.date, body.kickoff);
@@ -1254,6 +1318,7 @@ async function router(request, response) {
   if (request.method === "POST" && url.pathname === "/api/admin/sync-results") {
     const admin = await requireAdmin(request, response);
     if (!admin) return;
+    if (!requireFullAdmin(admin, response)) return;
     sendJson(response, 200, { ok: true, ...(await runScheduledSync("manual")), state: await appState(admin, requestServer(url, admin)) });
     return;
   }
