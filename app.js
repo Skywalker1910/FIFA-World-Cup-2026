@@ -22,7 +22,7 @@ let app = { user: null, state: null };
 let loginPanelOpen = false;
 let profilePanelOpen = false;
 let profileAvatarData = "";
-let selectedServer = localStorage.getItem("selectedServer") || "US";
+let selectedServer = localStorage.getItem("selectedServer") || "";
 const refreshIntervalMs = 60 * 1000;
 
 const elements = {
@@ -71,15 +71,19 @@ const elements = {
   groupTables: document.querySelector("#groupTables"),
   roadmap: document.querySelector("#roadmap"),
   roadmapLabel: document.querySelector("#roadmapLabel"),
-  rulesLabel: document.querySelector("#rulesLabel"),
-  rulesContent: document.querySelector("#rulesContent"),
+  updatesContent: document.querySelector("#updatesContent"),
+  privacyContent: document.querySelector("#privacyContent"),
+  helpContent: document.querySelector("#helpContent"),
   searchInput: document.querySelector("#searchInput"),
   stageFilter: document.querySelector("#stageFilter"),
   groupFilter: document.querySelector("#groupFilter"),
   statusFilter: document.querySelector("#statusFilter"),
   serverSwitch: document.querySelector("#serverSwitch"),
+  serverTag: document.querySelector("#serverTag"),
+  serverTagLabel: document.querySelector("#serverTagLabel"),
   adminSwitchButton: document.querySelector("#adminSwitchButton"),
   loginToggleButton: document.querySelector("#loginToggleButton"),
+  logoutNavButton: document.querySelector("#logoutNavButton"),
   profileNavTab: document.querySelector(".profile-nav-tab"),
 };
 
@@ -136,8 +140,55 @@ function scoreValue(value) {
   return scoringMode() === "points" ? `${Number(value || 0)} pts` : money(value);
 }
 
+function indiaAwards(row) {
+  return [
+    ["circle-dot", "Matchballs", row.matchballs ?? row.points ?? 0],
+    ["footprints", "Boots", row.boots ?? row.score_points ?? 0],
+    ["sparkles", "Glory", row.glory_points ?? row.correct ?? 0],
+    ["shirt", "Caps", row.caps ?? row.bets_entered ?? 0],
+    ["award", "Prestige", row.prestige_points ?? 0],
+    ["crown", "Legends", row.legends ?? 0],
+    ["gem", "Orbs", row.orbs ?? 0],
+  ];
+}
+
+function awardBadges(row, options = {}) {
+  if (scoringMode() !== "points") return "";
+  const labelFilter = options.labels ? new Set(options.labels) : null;
+  const awards = indiaAwards(row).filter(([, label]) => !labelFilter || labelFilter.has(label));
+  const limit = options.limit || awards.length;
+  return `<div class="award-row ${options.compact ? "compact" : ""} ${options.className || ""}">
+    ${awards.slice(0, limit).map(([iconName, label, value]) => `
+      <span class="award-pill" title="${escapeHtml(label)}">
+        ${icon(iconName)}
+        <strong>${Number(value || 0)}</strong>
+        <em>${escapeHtml(label)}</em>
+      </span>
+    `).join("")}
+  </div>`;
+}
+
 function activeServer() {
   return app.state?.settings?.server || selectedServer || "US";
+}
+
+function browserPreferredServer() {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  const languages = navigator.languages || [navigator.language || ""];
+  if (timezone === "Asia/Kolkata" || languages.some((language) => /(^|-)IN\b/i.test(language))) return "India";
+  return "US";
+}
+
+async function detectPreferredServer() {
+  if (selectedServer) return selectedServer;
+  try {
+    const geo = await api("/api/geo");
+    selectedServer = geo.source === "request-header" ? geo.preferredServer : browserPreferredServer();
+  } catch {
+    selectedServer = browserPreferredServer();
+  }
+  localStorage.setItem("selectedServer", selectedServer);
+  return selectedServer;
 }
 
 function dateLabel(value) {
@@ -327,12 +378,17 @@ function renderAccount() {
   elements.loginPanel.hidden = Boolean(user) || !loginPanelOpen;
   elements.profilePanel.hidden = !user || !profilePanelOpen;
   if (elements.profileButton) elements.profileButton.hidden = !user;
-  elements.profileNavTab.hidden = !user;
   elements.logoutButton.style.display = user ? "" : "none";
+  elements.logoutNavButton.hidden = !user;
   elements.adminSwitchButton.hidden = user?.role !== "admin";
-  elements.serverSwitch.hidden = user?.role === "player" && userServers.length <= 1;
-  elements.serverSwitch.innerHTML = userServers.map((server) => `<option value="${escapeHtml(server)}">${escapeHtml(server)}</option>`).join("");
-  elements.serverSwitch.value = activeServer();
+  elements.serverTag.hidden = false;
+  const canSwitchServers = !(user?.role === "player" && userServers.length <= 1);
+  elements.serverSwitch.hidden = !canSwitchServers;
+  elements.serverSwitch.textContent = "";
+  elements.serverSwitch.classList.toggle("is-india", activeServer() === "India");
+  elements.serverSwitch.dataset.nextServer = activeServer() === "India" ? "US" : "India";
+  elements.serverSwitch.setAttribute("aria-label", `Switch to ${elements.serverSwitch.dataset.nextServer} server`);
+  elements.serverTagLabel.textContent = `${activeServer()} Server`;
   elements.loginToggleButton.innerHTML = `<i data-lucide="${user ? "user-round" : "log-in"}"></i>${escapeHtml(user ? user.display_name : "Login")}`;
   window.lucide?.createIcons();
 }
@@ -429,10 +485,10 @@ function renderMetrics() {
     ["trophy", "Matches", fixtures.length],
     ["badge-check", "Settled", rows.filter((row) => row.settled).length],
     scoringMode() === "points"
-      ? ["target", "Points Awarded", scoreValue((app.state.leaderboard || []).reduce((sum, row) => sum + row.points, 0))]
-      : ["coins", "Total Pool", money(rows.reduce((sum, row) => sum + row.pool, 0))],
+      ? ["circle-dot", "Matchballs", (app.state.leaderboard || []).reduce((sum, row) => sum + Number(row.matchballs ?? row.points ?? 0), 0)]
+      : ["coins", "Total Entry Value", money(rows.reduce((sum, row) => sum + row.pool, 0))],
     scoringMode() === "points"
-      ? ["list-checks", "Correct Picks", (app.state.leaderboard || []).reduce((sum, row) => sum + row.correct, 0)]
+      ? ["footprints", "Boots", (app.state.leaderboard || []).reduce((sum, row) => sum + Number(row.boots ?? row.score_points ?? 0), 0)]
       : ["refresh-ccw", "Rollover", money(rows.reduce((sum, row) => sum + row.rollover, 0))],
     ["users-round", "Players", app.state.players.length],
   ];
@@ -448,7 +504,7 @@ function renderMetrics() {
 function renderLeaderboard() {
   const rows = app.state.leaderboard || [];
   const leader = rows[0];
-  elements.leaderLabel.textContent = leader ? `${leader.display_name} leads at ${scoreValue(scoringMode() === "points" ? leader.points : leader.net)}` : "No players yet";
+  elements.leaderLabel.textContent = leader ? `${leader.display_name} leads at ${scoringMode() === "points" ? `${leader.matchballs ?? leader.points ?? 0} Matchballs` : scoreValue(leader.net)}` : "No players yet";
   elements.leaderboard.innerHTML = rows.length ? rows.map((row, index) => `
     <div class="leader-row">
       <div class="rank">${index + 1}</div>
@@ -460,8 +516,9 @@ function renderLeaderboard() {
           <span>${icon("target")} ${row.settled ? Math.round((row.correct / row.settled) * 100) : 0}% accuracy</span>
           <span>${icon("flame")} ${row.correct} correct</span>
         </div>
+        ${awardBadges(row, { compact: true, limit: 4 })}
       </div>
-      <strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${scoreValue(scoringMode() === "points" ? row.points : row.net)}</strong>
+      <strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${scoringMode() === "points" ? `${row.matchballs ?? row.points ?? 0} MB` : scoreValue(row.net)}</strong>
     </div>
   `).join("") : `<div class="empty-state">No player accounts yet.</div>`;
   window.lucide?.createIcons();
@@ -581,8 +638,8 @@ function filteredFixtures() {
 
 function renderFixtures() {
   const isPlayer = app.user?.role === "player";
-  elements.poolHeader.textContent = scoringMode() === "points" ? "Points" : "Pool";
-  elements.rolloverHeader.textContent = scoringMode() === "points" ? "Missed" : "Rollover";
+  elements.poolHeader.textContent = scoringMode() === "points" ? "Matchballs" : "Entry Value";
+  elements.rolloverHeader.textContent = scoringMode() === "points" ? "Streak" : "Rollover";
   elements.fixturesTable.innerHTML = filteredFixtures().map((fixture) => {
     const row = settlement(fixture);
     const canBet = isPlayer && !fixture.locked && !fixture.result;
@@ -607,7 +664,7 @@ function renderFixtures() {
           </div>
           <div class="fixture-subtext">${canBet ? "Place pick and optional score prediction" : fixture.myPick ? `Your pick: ${resultLabel(fixture, fixture.myPick)}` : "Login as player before lock"}</div>
         </td>
-        <td><strong>${scoreValue(row.pool)}</strong><div class="fixture-subtext">${getBets(fixture).length} bets</div></td>
+        <td><strong>${scoreValue(row.pool)}</strong><div class="fixture-subtext">${getBets(fixture).length} predictions</div></td>
         <td><strong>${scoreValue(row.rollover)}</strong></td>
       </tr>
     `;
@@ -616,18 +673,19 @@ function renderFixtures() {
 
 function renderPlayers() {
   const rows = app.state.leaderboard || [];
-  const statOneLabel = scoringMode() === "points" ? "Points" : "Net";
+  const statOneLabel = scoringMode() === "points" ? "Matchballs" : "Net";
   const statTwoLabel = "Correct";
-  const statThreeLabel = scoringMode() === "points" ? "Score pts" : "ROI";
+  const statThreeLabel = scoringMode() === "points" ? "Caps" : "ROI";
   elements.playersLeaderboard.innerHTML = rows.length ? rows.map((row, index) => `
     <div class="leader-row">
       <div class="rank">${index + 1}</div>
       ${avatarHtml(row, "avatar avatar-small")}
       <div>
         <strong>${escapeHtml(row.display_name)}</strong>
-        <div class="fixture-subtext">${row.correct}/${row.settled} correct${scoringMode() === "points" ? `, ${row.points} pts` : `, ${row.bets_entered} bets entered`}</div>
+        <div class="fixture-subtext">${row.correct}/${row.settled} correct${scoringMode() === "points" ? `, ${row.matchballs ?? row.points ?? 0} Matchballs` : `, ${row.bets_entered} predictions entered`}</div>
+        ${awardBadges(row, { compact: true })}
       </div>
-      <strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${scoreValue(scoringMode() === "points" ? row.points : row.net)}</strong>
+      <strong class="${row.net >= 0 ? "money-positive" : "money-negative"}">${scoringMode() === "points" ? `${row.matchballs ?? row.points ?? 0} MB` : scoreValue(row.net)}</strong>
     </div>
   `).join("") : `<div class="empty-state">No player rankings yet.</div>`;
   elements.playerCards.innerHTML = (app.state.leaderboard || []).map((row, index) => `
@@ -647,15 +705,24 @@ function renderPlayers() {
             <h3>${escapeHtml(row.display_name)}</h3>
             ${row.supported_player ? `<p>Supporting ${escapeHtml(row.supported_player)}</p>` : row.supported_team ? `<p>Supporting ${escapeHtml(row.supported_team)}</p>` : `<p>World Cup Player</p>`}
           </div>
-          <div class="player-badge-row player-card-tags">
-            <span class="player-badge">${icon("medal")}Rank #${index + 1}</span>
-            <span class="player-badge">${icon("target")}${scoreValue(scoringMode() === "points" ? row.points : row.net)}</span>
-            <span class="player-badge">${icon("flame")}${row.correct} correct</span>
-          </div>
+          ${scoringMode() === "points" ? `
+            <div class="player-badge-row player-card-tags">
+              <span class="player-badge">${icon("medal")}Rank #${index + 1}</span>
+              <span class="player-badge">${icon("circle-dot")}${row.matchballs ?? row.points ?? 0} Matchballs</span>
+              <span class="player-badge">${icon("award")}${row.prestige_points ?? 0} Prestige</span>
+            </div>
+            ${awardBadges(row, { compact: true, labels: ["Glory", "Legends", "Orbs"], className: "player-card-streak-awards" })}
+          ` : `
+            <div class="player-badge-row player-card-tags">
+              <span class="player-badge">${icon("medal")}Rank #${index + 1}</span>
+              <span class="player-badge">${icon("target")}${scoreValue(row.net)}</span>
+              <span class="player-badge">${icon("flame")}${row.correct} correct</span>
+            </div>
+          `}
           <div class="player-card-stat-row">
-            <div><strong>${scoreValue(scoringMode() === "points" ? row.points : row.net)}</strong><span>${statOneLabel}</span></div>
-            <div><strong>${row.correct}</strong><span>${statTwoLabel}</span></div>
-            <div><strong>${scoringMode() === "points" ? row.score_points || 0 : `${Math.round(row.roi * 100)}%`}</strong><span>${statThreeLabel}</span></div>
+            <div><strong>${scoringMode() === "points" ? row.matchballs ?? row.points ?? 0 : scoreValue(row.net)}</strong><span>${statOneLabel}</span></div>
+            <div><strong>${scoringMode() === "points" ? row.boots ?? row.score_points ?? 0 : row.correct}</strong><span>${scoringMode() === "points" ? "Boots" : statTwoLabel}</span></div>
+            <div><strong>${scoringMode() === "points" ? row.caps ?? row.bets_entered ?? 0 : `${Math.round(row.roi * 100)}%`}</strong><span>${statThreeLabel}</span></div>
           </div>
           <small class="flip-hint">Click to flip</small>
         </section>
@@ -914,31 +981,102 @@ function renderRoadmap() {
   `).join("");
 }
 
-function renderRules() {
-  const india = scoringMode() === "points";
-  elements.rulesLabel.textContent = `${activeServer()} server rules`;
-  const serverRules = india
-    ? [
-        ["Prediction result", "Correct winner/draw prediction earns 1 point."],
-        ["Score prediction", "Correct score for each team earns 1 point."],
-        ["Exact score bonus", "Correct scores for both teams earn 5 score points total for that match."],
-        ["Leaderboard", "India rankings are ordered by total points, then correct predictions."],
-      ]
-    : [
-        ["Stake", `Each pick contributes ${money(app.state?.settings?.stake || 1)} to that match pool.`],
-        ["Payout", "Players with the correct prediction split the match pool."],
-        ["Ledger", "The Command Center ledger calculates who owes whom after settled matches."],
-        ["Score prediction", "Score prediction is available for fun, but it does not affect US payouts right now."],
-      ];
-  const commonRules = [
-    ["Login", "Use the login button and the credentials shared by the admin."],
-    ["Profile", "After login, open Profile to update display name, login ID, password, and profile picture."],
-    ["Placing picks", "Open Bets, choose the team name or Draw, and optionally enter the predicted score."],
-    ["Bet lock", `Picks lock ${app.state?.settings?.lockMinutes || 60} minutes before kickoff in Eastern Time.`],
-    ["Switching server", "Players assigned to both US and India can use the server selector at the top right."],
+function renderUpdates() {
+  const releases = [
+    ["v1.9.0", "Wednesday, June 17, 2026", "India Awards, Documentation, and Support Pages", [
+      "Added Matchballs, Boots, Glory, Caps, Prestige, Legends, and Orbs for India scoring.",
+      "Simplified India player cards with award-focused rows and clearer flip behavior.",
+      "Added prediction-focused documentation, privacy page, updates page, and help page.",
+      "Added high-level location-based default server selection with manual switching.",
+    ]],
+    ["v1.8.0", "Tuesday, June 16, 2026", "Branding and Production Assets", [
+      "Renamed the app to FIFA World Cup 2026.",
+      "Added app logo assets and fixed Docker image asset delivery.",
+      "Improved score display so match scores remain on a single line.",
+    ]],
+    ["v1.7.0", "Tuesday, June 16, 2026", "Scoped Command Center Controls", [
+      "Added full admin and US regional admin behavior.",
+      "Separated regional prediction record editing.",
+      "Added one-player prediction editor for cleaner Command Center workflows.",
+    ]],
+    ["v1.6.0", "Monday, June 15, 2026", "Regional Servers and Tournament Predictions", [
+      "Added US and India server experiences.",
+      "Added player server access controls.",
+      "Added profile, supported team/player, Golden Boot, and knockout prediction features.",
+    ]],
+    ["v1.5.0", "Sunday, June 14, 2026", "Command Center and Public Views", [
+      "Added user deletion, public picks view, profile editing, and profile picture uploads.",
+      "Added Railway health checks and deployment-safe runtime behavior.",
+      "Improved status badges and prediction saving.",
+    ]],
+    ["v1.4.0", "Sunday, June 14, 2026", "football-data.org Integration", [
+      "Switched score sync to football-data.org.",
+      "Added sync diagnostics and manual result sync controls.",
+      "Added safer sync error handling for production deployments.",
+    ]],
+    ["v1.3.0", "Sunday, June 14, 2026", "Tournament Structure", [
+      "Added fixtures, group tables, and road-to-final views.",
+      "Improved Command Center layout and administrator controls.",
+      "Updated the UI toward a cleaner modern dashboard.",
+    ]],
+    ["v1.2.0", "Saturday, June 13, 2026", "Live Scores and Sync Foundation", [
+      "Added automatic score sync foundation.",
+      "Displayed synced scores before final results are settled.",
+    ]],
+    ["v1.0.0", "Saturday, June 13, 2026", "Initial Release", [
+      "Created the first World Cup prediction tracker with fixtures, players, dashboard, and SQLite persistence.",
+    ]],
   ];
-  elements.rulesContent.innerHTML = [...serverRules, ...commonRules].map(([title, text]) => `
-    <article class="rule-card">
+  elements.updatesContent.innerHTML = releases.map(([version, date, title, notes]) => `
+    <article class="release-card document-status-card">
+      <span class="document-status-dot ${version === "v1.9.0" ? "is-live" : ""}" aria-hidden="true"></span>
+      <div class="release-meta"><span>${escapeHtml(version)}</span><time>${escapeHtml(date)}</time></div>
+      <div class="release-body">
+        <h4>${escapeHtml(title)}</h4>
+        <div class="release-note-grid">${notes.map((note) => `<div class="release-note">${escapeHtml(note)}</div>`).join("")}</div>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderPrivacy() {
+  const sections = [
+    ["Privacy Notice", "This private prediction platform stores the minimum data needed to run player accounts, match predictions, profiles, regional leaderboards, and administrator workflows."],
+    ["Account data", "The app stores display name, login ID, password hash, account role, assigned server access, session records, and optional profile image data."],
+    ["Prediction data", "The app stores match predictions, score forecasts, tournament selections, award counters, match results, and leaderboard summaries."],
+    ["Location and server defaults", "For visitors, the app may use high-level request country headers from the hosting platform or browser timezone/language signals to choose a default US or India server. Players can manually switch servers when their account has access."],
+    ["What is not collected", "The app does not intentionally collect precise GPS location, payment card data, advertising identifiers, or third-party marketing profiles."],
+    ["Third-party services", "Team flags load from flagcdn.com. Match score sync may use football-data.org when configured. Hosting and persistent storage are handled by the deployment provider."],
+    ["Data access", "Full admins can manage both servers. Regional admins can manage assigned-region player and prediction records only. Players can update their own profile and predictions before locks."],
+    ["Retention", "Data remains in the SQLite database until an administrator updates or deletes it. Railway volume backups and database exports should be managed by the app owner."],
+    ["Security", "Passwords are stored as hashes, sessions use HTTP-only cookies, and sensitive API keys are loaded from environment variables."],
+  ];
+  elements.privacyContent.innerHTML = sections.map(([title, text], index) => `
+    <section class="document-section document-status-card">
+      <span class="document-status-dot ${index === 0 ? "is-live" : ""}" aria-hidden="true"></span>
+      <h4>${escapeHtml(title)}</h4>
+      <p>${escapeHtml(text)}</p>
+    </section>
+  `).join("");
+}
+
+function renderHelp() {
+  const india = activeServer() === "India";
+  const help = [
+    ["Choose your server", "The app selects a starting server from high-level location signals when possible. Use the server control in the top right to switch if your account has access to more than one server."],
+    ["Login", "Click Login and enter the login ID and temporary password shared by the administrator. After login, open Profile to update your details and password."],
+    ["Save match predictions", "Open Predictions, choose the team name or Draw, optionally enter score forecasts, and save before the match lock time."],
+    ["Prediction lock", "Match predictions lock before kickoff based on the app setting. Locked or settled matches cannot be changed by players."],
+    ["Public picks", "Open Public Picks to see submitted player predictions by match."],
+    ["Profile cards", "Open Players to see rankings and profile cards. Click a card to flip it and view tournament predictions."],
+    india
+      ? ["Earn India awards", "Matchballs come from correct winner/draw predictions. Boots come from correct team goal forecasts and perfect score bonuses. Glory requires correct winner/draw plus exact score. Caps come from participation. Prestige, Legends, and Orbs come from 3, 5, and 7 correct-prediction streaks."]
+      : ["US scoring", "US rankings use dollar-based net settlement in the Command Center ledger. Score forecasts are collected for engagement but do not affect US settlement right now."],
+    ["Need help", "Contact the app administrator if you cannot log in, need regional access, or need a profile/account correction."],
+  ];
+  elements.helpContent.innerHTML = help.map(([title, text]) => `
+    <article class="rule-card document-status-card">
+      <span class="document-status-dot" aria-hidden="true"></span>
       <strong>${escapeHtml(title)}</strong>
       <p>${escapeHtml(text)}</p>
     </article>
@@ -963,11 +1101,14 @@ function renderAll() {
   renderAllFixtures();
   renderGroupTables();
   renderRoadmap();
-  renderRules();
+  renderUpdates();
+  renderPrivacy();
+  renderHelp();
   window.lucide?.createIcons();
 }
 
 async function refresh() {
+  await detectPreferredServer();
   const [me, state] = await Promise.all([api("/api/me"), api(`/api/state?server=${encodeURIComponent(selectedServer)}`)]);
   app.user = me.user;
   if (app.user?.servers?.length && !app.user.servers.includes(selectedServer)) {
@@ -993,14 +1134,29 @@ async function refresh() {
   renderAll();
 }
 
+function setView(viewName) {
+  if (viewName === "profile" && !app.user) {
+    loginPanelOpen = true;
+    renderAccount();
+    elements.loginPanel.querySelector("input")?.focus({ preventScroll: true });
+    return;
+  }
+  const target = document.querySelector(`#${viewName}View`);
+  if (!target) return;
+  document.querySelectorAll(".nav-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewName));
+  document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+  target.classList.add("active");
+  const navButton = document.querySelector(`.nav-tab[data-view="${CSS.escape(viewName)}"]`);
+  elements.viewTitle.textContent = navButton?.textContent?.trim() || target.querySelector("h3")?.textContent || "FIFA World Cup 2026";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 document.querySelectorAll(".nav-tab").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".nav-tab").forEach((tab) => tab.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
-    button.classList.add("active");
-    document.querySelector(`#${button.dataset.view}View`).classList.add("active");
-    elements.viewTitle.textContent = button.textContent;
-  });
+  button.addEventListener("click", () => setView(button.dataset.view));
+});
+
+document.querySelectorAll("[data-jump-view]").forEach((button) => {
+  button.addEventListener("click", () => setView(button.dataset.jumpView));
 });
 
 elements.loginForm.addEventListener("submit", async (event) => {
@@ -1015,6 +1171,13 @@ elements.loginForm.addEventListener("submit", async (event) => {
 elements.logoutButton.addEventListener("click", async () => {
   await api("/api/logout", { method: "POST", body: "{}" });
   profilePanelOpen = false;
+  await refresh();
+});
+
+elements.logoutNavButton.addEventListener("click", async () => {
+  await api("/api/logout", { method: "POST", body: "{}" });
+  profilePanelOpen = false;
+  loginPanelOpen = false;
   await refresh();
 });
 
@@ -1132,15 +1295,6 @@ elements.profileForm.addEventListener("submit", async (event) => {
   }
 });
 
-elements.loginToggleButton.addEventListener("click", () => {
-  if (app.user) return;
-  loginPanelOpen = !loginPanelOpen;
-  renderAccount();
-  if (loginPanelOpen) {
-    elements.loginPanel.querySelector("input")?.focus({ preventScroll: true });
-  }
-});
-
 elements.loginCloseButton.addEventListener("click", () => {
   loginPanelOpen = false;
   renderAccount();
@@ -1169,8 +1323,10 @@ document.addEventListener("keydown", (event) => {
   element.addEventListener("input", renderFixtures);
 });
 
-elements.serverSwitch.addEventListener("change", async () => {
-  selectedServer = elements.serverSwitch.value;
+elements.serverSwitch.addEventListener("click", async () => {
+  const userServers = app.user?.servers || app.state?.settings?.servers || ["US", "India"];
+  const nextServer = elements.serverSwitch.dataset.nextServer || (activeServer() === "India" ? "US" : "India");
+  selectedServer = userServers.includes(nextServer) ? nextServer : userServers[0] || "US";
   localStorage.setItem("selectedServer", selectedServer);
   await refresh();
 });

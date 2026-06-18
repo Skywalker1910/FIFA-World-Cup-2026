@@ -13,7 +13,7 @@
           <span class="brand-mark"><img src="assets/world-cup-2026-logo.png" alt="FIFA World Cup 2026"></span>
           <div>
             <h1>Command Center</h1>
-            <p>Scores, bets, players, ledger</p>
+            <p>Scores, predictions, players, ledger</p>
           </div>
         </div>
         <nav class="nav-tabs" aria-label="Admin navigation">
@@ -52,7 +52,7 @@
             </div>
             <div class="login-copy">
               <h3 id="adminLoginTitle">Sign in to Command Center</h3>
-              <p>Use your admin credentials to manage scores, bets, players, ledger, and app settings.</p>
+              <p>Use your admin credentials to manage scores, predictions, players, ledger, and app settings.</p>
             </div>
             <form id="loginForm" class="login-form">
               <input name="loginId" placeholder="Login ID" autocomplete="username" required>
@@ -78,7 +78,7 @@
           </div>
           <nav class="command-nav" aria-label="Command Center sections">
             <button class="command-tab active" data-admin-view="scores" type="button"><i data-lucide="trophy"></i>Match Scores</button>
-            <button class="command-tab" data-admin-view="bets" type="button"><i data-lucide="list-checks"></i>Player Bets</button>
+            <button class="command-tab" data-admin-view="bets" type="button"><i data-lucide="list-checks"></i>Player Predictions</button>
             <button class="command-tab" data-admin-view="players" type="button"><i data-lucide="users-round"></i>Player Records</button>
             <button class="command-tab" data-admin-view="ledger" type="button"><i data-lucide="receipt-text"></i>Ledger</button>
             <button class="command-tab" data-admin-view="settings" type="button"><i data-lucide="settings"></i>Settings</button>
@@ -115,7 +115,7 @@
           <section class="admin-page" data-admin-page="bets" hidden>
             <section class="panel">
               <div class="panel-heading">
-                <h3>Player Bets</h3>
+                <h3>Player Predictions</h3>
                 <span>Update all player picks side by side per match</span>
               </div>
               <div class="compact-list" id="adminBets"></div>
@@ -161,7 +161,7 @@
                 <span>Applies immediately</span>
               </div>
               <form id="settingsForm" class="form-grid">
-                <input name="stake" type="number" min="0" step="0.25" placeholder="Stake">
+                <input name="stake" type="number" min="0" step="0.25" placeholder="Entry value">
                 <input name="lockMinutes" type="number" min="0" step="1" placeholder="Lock minutes">
                 <button class="primary-button" type="submit"><i data-lucide="save"></i>Save settings</button>
               </form>
@@ -175,7 +175,7 @@
               <div class="compact-list">
                 <div class="compact-item"><strong>Database</strong><span>SQLite</span></div>
                 <div class="compact-item"><strong>Sports API</strong><span>football-data.org sync from server environment</span></div>
-                <div class="compact-item"><strong>Bet Lock</strong><span>Controlled by lock minutes setting</span></div>
+                <div class="compact-item"><strong>Prediction Lock</strong><span>Controlled by lock minutes setting</span></div>
               </div>
             </section>
           </section>

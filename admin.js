@@ -59,7 +59,7 @@ function optionList(selected) {
 
 function betPickList(fixture, selected) {
   const options = [
-    ["", "No bet"],
+    ["", "No prediction"],
     ["Team 1", fixture.team1],
     ["Team 2", fixture.team2],
     ["Draw", "Draw"],
@@ -169,7 +169,7 @@ function renderAdminBetsTable(server, state) {
       <div class="admin-server-bets-heading">
         <div>
           <span class="server-section-kicker">${escapeHtml(server)} server</span>
-          <h4>${escapeHtml(server)} Player Bets</h4>
+          <h4>${escapeHtml(server)} Player Predictions</h4>
         </div>
         <span>${players.length} players · ${state.fixtures.length} matches</span>
       </div>
@@ -186,13 +186,13 @@ function renderAdminBetsTable(server, state) {
               `).join("")}
             </select>
           </label>
-          <p>Only this player’s bets are shown below. Change the player from this dropdown to edit another record set.</p>
+          <p>Only this player’s predictions are shown below. Change the player from this dropdown to edit another record set.</p>
         </div>
       ` : ""}
       <div class="admin-bets-table" data-server="${escapeHtml(server)}">
         <div class="admin-bets-header">
           <strong>Match</strong>
-          <strong>${selectedPlayer ? escapeHtml(selectedPlayer.display_name) : "Player bet"}</strong>
+          <strong>${selectedPlayer ? escapeHtml(selectedPlayer.display_name) : "Player prediction"}</strong>
           <strong>Action</strong>
         </div>
         ${state.fixtures.map((fixture) => `
@@ -217,7 +217,7 @@ function renderAdminBetsTable(server, state) {
                     <input data-admin-score-team2 data-user-id="${selectedPlayer.id}" type="number" min="0" step="1" value="${escapeHtml(predictionValue(fixture.bets[selectedPlayer.id], "predictedTeam2Score"))}" placeholder="${escapeHtml(fixture.team2)}">
                   </div>
                 </label>
-              ` : `<div class="empty-state">Select a player to edit bets.</div>`}
+              ` : `<div class="empty-state">Select a player to edit predictions.</div>`}
             </div>
             <button class="secondary-light-button" data-save-bet-row="true" type="button" ${selectedPlayer ? "" : "disabled"}>Save</button>
           </div>
@@ -300,8 +300,8 @@ function renderAdmin() {
   `).join("");
   elements.adminBets.innerHTML = `
     <div class="admin-bets-overview">
-      <strong>${escapeHtml(activeBetServer)} bet table</strong>
-      <p>Use the server switch above to load the US or India bet table. Each server writes to its own bet records.</p>
+      <strong>${escapeHtml(activeBetServer)} prediction table</strong>
+      <p>Use the server switch above to load the US or India prediction table. Each server writes to its own prediction records.</p>
       <div>${betServerList}</div>
     </div>
     ${renderAdminBetsTable(activeBetServer, activeBetState)}
@@ -313,7 +313,7 @@ function renderAdmin() {
         <div class="ledger-balance ${Number(player.net) >= 0 ? "positive" : "negative"}">
           <strong>${escapeHtml(player.display_name)}</strong>
           <span>${scoreValue(scoringMode() === "points" ? player.points : player.net)}</span>
-          <small>${player.correct} correct · ${player.bets_entered} bets</small>
+          <small>${player.correct} correct · ${player.bets_entered} predictions</small>
         </div>
       `).join("")}
     </div>
@@ -452,7 +452,7 @@ elements.adminUsers.addEventListener("click", async (event) => {
   if (deleteButton) {
     const row = deleteButton.closest(".admin-user");
     const userName = row.querySelector(".admin-item-title strong")?.textContent || "this user";
-    if (!window.confirm(`Delete ${userName}? This removes their account, sessions, and bets.`)) return;
+    if (!window.confirm(`Delete ${userName}? This removes their account, sessions, and prediction records.`)) return;
     try {
       const payload = await api(`/api/admin/users/${row.dataset.id}/delete`, { method: "POST", body: "{}" });
       app.state = payload.state;
@@ -506,7 +506,7 @@ elements.adminBets.addEventListener("click", async (event) => {
     nextState = payload.state;
     app.serverStates[rowServer] = nextState;
     if (rowServer === selectedServer) app.state = nextState;
-    setStatus(`${rowServer} bet saved for match #${row.dataset.matchId}`);
+    setStatus(`${rowServer} prediction saved for match #${row.dataset.matchId}`);
     renderAll();
   } catch (error) {
     setStatus(error.message);

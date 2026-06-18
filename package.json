@@ -1,5 +1,5 @@
 {
-  "name": "world-cup-2026-bet-tracker",
+  "name": "fifa-world-cup-2026-predictions",
   "version": "1.0.0",
   "private": true,
   "description": "SQLite-backed FIFA World Cup 2026 prediction app.",

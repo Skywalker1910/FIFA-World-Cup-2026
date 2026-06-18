@@ -100,6 +100,20 @@ function normalizeServer(value) {
   return servers.includes(value) ? value : "US";
 }
 
+function requestCountry(request) {
+  const headers = request.headers;
+  const country = headers["cf-ipcountry"]
+    || headers["x-vercel-ip-country"]
+    || headers["x-country-code"]
+    || headers["x-appengine-country"]
+    || "";
+  return String(Array.isArray(country) ? country[0] : country).trim().toUpperCase();
+}
+
+function preferredServerFromCountry(country) {
+  return country === "IN" ? "India" : "US";
+}
+
 function parseServerAccess(value, role = "player") {
   const fallback = role === "admin" ? "US,India" : "US";
   const access = String(value || fallback)
@@ -576,24 +590,32 @@ function settlement(match, bets, users, stake, server = "US") {
     const won = Boolean(match.result && bet && bet.pick === match.result);
     const settled = match.result && bet ? 1 : 0;
     if (server === "India") {
-      const team1ScorePoint = settled
+      const team1GoalBoot = settled
         && bet.predicted_team1_score !== null
         && Number(bet.predicted_team1_score) === Number(match.team1_score)
         ? 1
         : 0;
-      const team2ScorePoint = settled
+      const team2GoalBoot = settled
         && bet.predicted_team2_score !== null
         && Number(bet.predicted_team2_score) === Number(match.team2_score)
         ? 1
         : 0;
-      const exactScoreBonus = team1ScorePoint && team2ScorePoint ? 3 : 0;
-      const points = (won ? 1 : 0) + team1ScorePoint + team2ScorePoint + exactScoreBonus;
+      const perfectScore = team1GoalBoot && team2GoalBoot ? 1 : 0;
+      const boots = team1GoalBoot + team2GoalBoot + (perfectScore ? 3 : 0);
+      const matchballs = won ? 1 : 0;
+      const gloryPoints = won && perfectScore ? 1 : 0;
+      const caps = bet ? 1 : 0;
       return {
         user_id: user.id,
         payout: 0,
-        net: points,
-        points,
-        score_points: team1ScorePoint + team2ScorePoint + exactScoreBonus,
+        net: matchballs,
+        points: matchballs,
+        matchballs,
+        score_points: boots,
+        boots,
+        perfect_scores: perfectScore,
+        glory_points: gloryPoints,
+        caps,
         correct: won ? 1 : 0,
         settled,
       };
@@ -632,6 +654,14 @@ async function appState(user = null, selectedServer = "US") {
     settled: 0,
     correct: 0,
     score_points: 0,
+    boots: 0,
+    perfect_scores: 0,
+    glory_points: 0,
+    caps: 0,
+    matchballs: 0,
+    prestige_points: 0,
+    legends: 0,
+    orbs: 0,
     payout: 0,
     net: 0,
     points: 0,
@@ -648,6 +678,11 @@ async function appState(user = null, selectedServer = "US") {
       summary.settled += row.settled;
       summary.correct += row.correct;
       summary.score_points += row.score_points || 0;
+      summary.boots += row.boots || 0;
+      summary.perfect_scores += row.perfect_scores || 0;
+      summary.glory_points += row.glory_points || 0;
+      summary.caps += row.caps || 0;
+      summary.matchballs += row.matchballs || 0;
       summary.payout += row.payout;
       summary.net += row.net;
       summary.points += row.points || 0;
@@ -680,12 +715,37 @@ async function appState(user = null, selectedServer = "US") {
     };
   });
 
+  if (server === "India") {
+    summaries.forEach((summary) => {
+      let streak = 0;
+      matches.forEach((match) => {
+        if (!match.result) return;
+        const bet = bets.find((row) => row.user_id === summary.user_id && row.match_id === match.id);
+        if (bet?.pick === match.result) {
+          streak += 1;
+          if (streak === 3) summary.prestige_points += 1;
+          if (streak === 5) summary.legends += 1;
+          if (streak === 7) summary.orbs += 1;
+        } else {
+          streak = 0;
+        }
+      });
+    });
+  }
+
   summaries.forEach((summary) => {
     const staked = summary.settled * stake;
     summary.roi = staked ? summary.net / staked : 0;
   });
   summaries.sort((a, b) => server === "India"
-    ? b.points - a.points || b.correct - a.correct || a.display_name.localeCompare(b.display_name)
+    ? b.matchballs - a.matchballs
+      || b.boots - a.boots
+      || b.glory_points - a.glory_points
+      || b.orbs - a.orbs
+      || b.legends - a.legends
+      || b.prestige_points - a.prestige_points
+      || b.caps - a.caps
+      || a.display_name.localeCompare(b.display_name)
     : b.net - a.net || b.correct - a.correct || a.display_name.localeCompare(b.display_name));
 
   return {
@@ -988,6 +1048,17 @@ async function router(request, response) {
 
   if (request.method === "GET" && url.pathname === "/api/me") {
     sendJson(response, 200, { user: publicUser(await currentUser(request)) });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/geo") {
+    const country = requestCountry(request);
+    sendJson(response, 200, {
+      ok: true,
+      country: country || null,
+      preferredServer: preferredServerFromCountry(country),
+      source: country ? "request-header" : "default",
+    });
     return;
   }
 
