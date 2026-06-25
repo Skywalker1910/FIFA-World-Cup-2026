@@ -18,7 +18,7 @@ const GOLDEN_BOOT_OPTIONS = [
   "Raphinha", "Bukayo Saka", "Christian Pulisic", "Jonathan David", "Álvaro Morata",
 ];
 
-let app = { user: null, state: null };
+let app = { user: null, state: null, aiState: null };
 let loginPanelOpen = false;
 let profilePanelOpen = false;
 let profileAvatarData = "";
@@ -63,6 +63,15 @@ const elements = {
   fixturesTable: document.querySelector("#fixturesTable"),
   publicBetsHead: document.querySelector("#publicBetsHead"),
   publicBetsBody: document.querySelector("#publicBetsBody"),
+  aiAgentCards: document.querySelector("#aiAgentCards"),
+  aiPredictionsHead: document.querySelector("#aiPredictionsHead"),
+  aiPredictionsBody: document.querySelector("#aiPredictionsBody"),
+  aiPredictionsList: document.querySelector("#aiPredictionsList"),
+  aiPredictionsLabel: document.querySelector("#aiPredictionsLabel"),
+  aiServerLabel: document.querySelector("#aiServerLabel"),
+  aiActiveAgents: document.querySelector("#aiActiveAgents"),
+  aiTotalPredictions: document.querySelector("#aiTotalPredictions"),
+  aiAverageConfidence: document.querySelector("#aiAverageConfidence"),
   poolHeader: document.querySelector("#poolHeader"),
   rolloverHeader: document.querySelector("#rolloverHeader"),
   playerCards: document.querySelector("#playerCards"),
@@ -378,11 +387,11 @@ function renderAccount() {
   elements.loginPanel.hidden = Boolean(user) || !loginPanelOpen;
   elements.profilePanel.hidden = !user || !profilePanelOpen;
   if (elements.profileButton) elements.profileButton.hidden = !user;
-  elements.logoutButton.style.display = user ? "" : "none";
+  elements.logoutButton.hidden = !user;
   elements.logoutNavButton.hidden = !user;
   elements.adminSwitchButton.hidden = user?.role !== "admin";
   elements.serverTag.hidden = false;
-  const canSwitchServers = !(user?.role === "player" && userServers.length <= 1);
+  const canSwitchServers = !(["player", "ai_agent"].includes(user?.role) && userServers.length <= 1);
   elements.serverSwitch.hidden = !canSwitchServers;
   elements.serverSwitch.textContent = "";
   elements.serverSwitch.classList.toggle("is-india", activeServer() === "India");
@@ -637,7 +646,7 @@ function filteredFixtures() {
 }
 
 function renderFixtures() {
-  const isPlayer = app.user?.role === "player";
+  const isPlayer = ["player", "ai_agent"].includes(app.user?.role);
   elements.poolHeader.textContent = scoringMode() === "points" ? "Matchballs" : "Entry Value";
   elements.rolloverHeader.textContent = scoringMode() === "points" ? "Streak" : "Rollover";
   elements.fixturesTable.innerHTML = filteredFixtures().map((fixture) => {
@@ -808,6 +817,25 @@ function publicPredictionLabel(bet) {
   return `${bet.predictedTeam1Score}-${bet.predictedTeam2Score}`;
 }
 
+function isPerfectPublicPrediction(fixture, bet) {
+  if (!fixture.result || !bet || bet.pick !== fixture.result) return false;
+  if (fixture.team1Score === null || fixture.team1Score === undefined || fixture.team2Score === null || fixture.team2Score === undefined) return false;
+  if (bet.predictedTeam1Score === null || bet.predictedTeam1Score === undefined || bet.predictedTeam2Score === null || bet.predictedTeam2Score === undefined) return false;
+  return Number(bet.predictedTeam1Score) === Number(fixture.team1Score)
+    && Number(bet.predictedTeam2Score) === Number(fixture.team2Score);
+}
+
+function publicPickStatus(fixture, bet, correctPickCount) {
+  const pick = bet?.pick || "";
+  if (!pick) return { className: "", uniqueCorrect: false };
+  if (!fixture.result) return { className: "is-pending", uniqueCorrect: false };
+  if (pick !== fixture.result) return { className: "is-incorrect", uniqueCorrect: false };
+  return {
+    className: isPerfectPublicPrediction(fixture, bet) ? "is-perfect" : "is-correct",
+    uniqueCorrect: correctPickCount === 1,
+  };
+}
+
 function renderPublicBets() {
   const players = app.state.players || [];
   elements.publicBetsHead.innerHTML = `
@@ -817,24 +845,235 @@ function renderPublicBets() {
       ${players.map((player) => `<th>${escapeHtml(player.display_name)}</th>`).join("")}
     </tr>
   `;
-  elements.publicBetsBody.innerHTML = app.state.fixtures.map((fixture) => `
+  elements.publicBetsBody.innerHTML = app.state.fixtures.map((fixture) => {
+    const correctPickCount = fixture.result
+      ? Object.values(fixture.bets || {}).filter((prediction) => prediction?.pick === fixture.result).length
+      : 0;
+    return `
+      <tr>
+        <td>
+          <strong>#${fixture.id}</strong>
+          <div class="fixture-subtext">${escapeHtml(fixture.stage || "")} ${escapeHtml(fixture.group || "")}</div>
+        </td>
+        <td>
+          <strong>${dateLabel(fixture.date)}</strong>
+          <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div>
+        </td>
+        ${players.map((player) => {
+          const bet = fixture.bets[player.id] || null;
+          const pick = bet?.pick || "";
+          const scorePrediction = publicPredictionLabel(bet);
+          const status = publicPickStatus(fixture, bet, correctPickCount);
+          return `<td><span class="pick-chip ${status.className}">${status.uniqueCorrect ? `<i class="pick-star" data-lucide="star"></i>` : ""}<span>${escapeHtml(publicPickLabel(fixture, pick))}${scorePrediction ? `<small>${escapeHtml(scorePrediction)}</small>` : ""}</span></span></td>`;
+        }).join("")}
+      </tr>
+    `;
+  }).join("");
+}
+
+const AI_PROVIDER_CARDS = [
+  { key: "openai", name: "OpenAI", agentLabel: "GPT Agent", icon: "sparkles", className: "provider-openai" },
+  { key: "anthropic", name: "Anthropic", agentLabel: "Claude Agent", icon: "brain-circuit", className: "provider-claude" },
+  { key: "google", name: "Google", agentLabel: "Gemini Agent", icon: "gem", className: "provider-gemini" },
+];
+
+function aiProviderKey(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized.includes("openai") || normalized.includes("gpt")) return "openai";
+  if (normalized.includes("anthropic") || normalized.includes("claude")) return "anthropic";
+  if (normalized.includes("google") || normalized.includes("gemini")) return "google";
+  return "other";
+}
+
+function aiMetadataEntries(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+  return Object.entries(metadata).slice(0, 5).map(([key, value]) => {
+    const label = key.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
+    const displayValue = Array.isArray(value)
+      ? value.join(", ")
+      : value && typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+    return [label, displayValue];
+  });
+}
+
+function aiPredictionAsBet(prediction) {
+  return prediction ? {
+    pick: prediction.pick,
+    predictedTeam1Score: prediction.predictedTeam1Score,
+    predictedTeam2Score: prediction.predictedTeam2Score,
+  } : null;
+}
+
+function renderAIPredictionMatrix(agents, predictions) {
+  if (!elements.aiPredictionsHead || !elements.aiPredictionsBody) return;
+  elements.aiPredictionsHead.innerHTML = `
     <tr>
-      <td>
-        <strong>#${fixture.id}</strong>
-        <div class="fixture-subtext">${escapeHtml(fixture.stage || "")} ${escapeHtml(fixture.group || "")}</div>
-      </td>
-      <td>
-        <strong>${dateLabel(fixture.date)}</strong>
-        <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div>
-      </td>
-      ${players.map((player) => {
-        const bet = fixture.bets[player.id] || null;
-        const pick = bet?.pick || "";
-        const scorePrediction = publicPredictionLabel(bet);
-        return `<td><span class="pick-chip ${pick ? "has-pick" : ""}">${escapeHtml(publicPickLabel(fixture, pick))}${scorePrediction ? `<small>${escapeHtml(scorePrediction)}</small>` : ""}</span></td>`;
-      }).join("")}
+      <th>Match</th>
+      <th>Date</th>
+      ${agents.map((agent) => `
+        <th>
+          <span class="ai-table-agent">
+            <i data-lucide="${AI_PROVIDER_CARDS.find((provider) => provider.key === aiProviderKey(agent.provider || agent.model))?.icon || "bot"}"></i>
+            ${escapeHtml(agent.displayName)}
+          </span>
+        </th>
+      `).join("")}
     </tr>
-  `).join("");
+  `;
+
+  const matches = (app.state?.fixtures || []).length
+    ? [...app.state.fixtures]
+    : [...new Map(predictions.map((prediction) => [
+      prediction.matchId,
+      { id: prediction.matchId, ...prediction.match },
+    ])).values()];
+  matches.sort((left, right) => Number(left.id) - Number(right.id));
+
+  elements.aiPredictionsBody.innerHTML = agents.length && matches.length ? matches.map((fixture) => {
+    const matchPredictions = predictions.filter((prediction) => Number(prediction.matchId) === Number(fixture.id));
+    const correctPickCount = fixture.result
+      ? matchPredictions.filter((prediction) => prediction.pick === fixture.result).length
+      : 0;
+    return `
+      <tr>
+        <td>
+          <strong>#${fixture.id}</strong>
+          <div class="fixture-subtext">${escapeHtml(fixture.stage || "")}${fixture.group ? ` · Group ${escapeHtml(fixture.group)}` : ""}</div>
+          <div class="ai-table-matchup">${teamBadge(fixture.team1, { compact: true })}<span>vs</span>${teamBadge(fixture.team2, { compact: true })}</div>
+        </td>
+        <td>
+          <strong>${dateLabel(fixture.date)}</strong>
+          <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div>
+        </td>
+        ${agents.map((agent) => {
+          const prediction = matchPredictions.find((item) => Number(item.userId) === Number(agent.id)) || null;
+          const bet = aiPredictionAsBet(prediction);
+          const status = publicPickStatus(fixture, bet, correctPickCount);
+          const score = prediction && prediction.predictedTeam1Score !== null && prediction.predictedTeam1Score !== undefined
+            && prediction.predictedTeam2Score !== null && prediction.predictedTeam2Score !== undefined
+            ? `${prediction.predictedTeam1Score}-${prediction.predictedTeam2Score}`
+            : "";
+          const confidence = Number(prediction?.confidence);
+          return `
+            <td>
+              <span class="pick-chip ai-table-pick ${status.className}">
+                ${status.uniqueCorrect ? `<i class="pick-star" data-lucide="star"></i>` : ""}
+                <span>
+                  ${escapeHtml(publicPickLabel(fixture, prediction?.pick || ""))}
+                  ${score ? `<small>${escapeHtml(score)}${Number.isFinite(confidence) ? ` · ${Math.round(confidence)}%` : ""}</small>` : Number.isFinite(confidence) ? `<small>${Math.round(confidence)}% confidence</small>` : ""}
+                </span>
+              </span>
+            </td>
+          `;
+        }).join("")}
+      </tr>
+    `;
+  }).join("") : `
+    <tr>
+      <td colspan="${Math.max(2, agents.length + 2)}">
+        <div class="empty-state">AI prediction records will appear here after agents submit their first match predictions.</div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderAI() {
+  if (!elements.aiAgentCards || !elements.aiPredictionsList) return;
+  const aiState = app.aiState || { agents: [], predictions: [], providers: [], server: activeServer() };
+  const agents = aiState.agents || [];
+  const predictions = aiState.predictions || [];
+  const confidenceValues = predictions
+    .map((prediction) => Number(prediction.confidence))
+    .filter((confidence) => Number.isFinite(confidence));
+  elements.aiServerLabel.textContent = `${aiState.server || activeServer()} Server`;
+  elements.aiPredictionsLabel.textContent = `${predictions.length} predictions from ${agents.length} AI agent${agents.length === 1 ? "" : "s"}`;
+  elements.aiActiveAgents.textContent = agents.length;
+  elements.aiTotalPredictions.textContent = predictions.length;
+  elements.aiAverageConfidence.textContent = confidenceValues.length
+    ? `${Math.round(confidenceValues.reduce((total, value) => total + value, 0) / confidenceValues.length)}%`
+    : "—";
+  renderAIPredictionMatrix(agents, predictions);
+
+  elements.aiAgentCards.innerHTML = AI_PROVIDER_CARDS.map((provider) => {
+    const providerAgents = agents.filter((agent) => aiProviderKey(agent.provider || agent.model) === provider.key);
+    const agent = providerAgents[0] || null;
+    const providerPredictions = predictions.filter((prediction) => aiProviderKey(prediction.provider || prediction.model) === provider.key);
+    const providerConfidence = providerPredictions
+      .map((prediction) => Number(prediction.confidence))
+      .filter((confidence) => Number.isFinite(confidence));
+    return `
+    <article class="ai-agent-card ${provider.className} ${agent ? "is-connected" : "is-awaiting"}">
+      <div class="ai-agent-card-head">
+        <span class="ai-provider-mark"><i data-lucide="${provider.icon}"></i></span>
+        <span class="ai-agent-live"><span></span>${agent ? "Connected" : "Awaiting agent"}</span>
+      </div>
+      <span class="ai-provider-name">${provider.name}</span>
+      <h4>${escapeHtml(agent?.displayName || provider.agentLabel)}</h4>
+      <p>${escapeHtml(agent?.model || "Create and assign a dedicated AI agent account in Command Center")}</p>
+      <div class="ai-agent-stats">
+        <div><strong>${agent?.predictionsEntered || 0}</strong><span>Predictions</span></div>
+        <div><strong>${agent?.correct || 0}</strong><span>Correct</span></div>
+        <div><strong>${providerConfidence.length ? `${Math.round(providerConfidence.reduce((sum, value) => sum + value, 0) / providerConfidence.length)}%` : "—"}</strong><span>Confidence</span></div>
+      </div>
+    </article>
+  `;
+  }).join("");
+
+  elements.aiPredictionsList.innerHTML = predictions.length ? predictions.map((prediction) => {
+    const fixture = { id: prediction.matchId, ...prediction.match };
+    const settled = Boolean(fixture.result);
+    const correct = settled && prediction.pick === fixture.result;
+    const provider = AI_PROVIDER_CARDS.find((item) => item.key === aiProviderKey(prediction.provider || prediction.model));
+    const confidence = Number(prediction.confidence);
+    const hasConfidence = Number.isFinite(confidence);
+    const metadataEntries = aiMetadataEntries(prediction.metadata);
+    const scorePrediction = prediction.predictedTeam1Score !== null
+      && prediction.predictedTeam1Score !== undefined
+      && prediction.predictedTeam2Score !== null
+      && prediction.predictedTeam2Score !== undefined
+      ? `${prediction.predictedTeam1Score} – ${prediction.predictedTeam2Score}`
+      : "No score forecast";
+    return `
+      <article class="ai-prediction-card ${provider?.className || ""}">
+        <div class="ai-prediction-agent">
+          <span class="ai-provider-mark compact"><i data-lucide="${provider?.icon || "bot"}"></i></span>
+          <div>
+            <strong>${escapeHtml(prediction.agentName)}</strong>
+            <span>${escapeHtml([prediction.provider, prediction.model].filter(Boolean).join(" · ") || "AI agent")}</span>
+          </div>
+        </div>
+        <div class="ai-prediction-match">
+          <span>#${prediction.matchId} · ${escapeHtml(fixture.stage || "")}${fixture.group ? ` · Group ${escapeHtml(fixture.group)}` : ""}</span>
+          <div>${teamBadge(fixture.team1, { compact: true })}<b>vs</b>${teamBadge(fixture.team2, { compact: true })}</div>
+          <small>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</small>
+        </div>
+        <div class="ai-prediction-pick">
+          <span>Predicted winner</span>
+          <strong>${escapeHtml(publicPickLabel(fixture, prediction.pick))}</strong>
+          <small>${escapeHtml(scorePrediction)}</small>
+          <div class="ai-confidence">
+            <span><b>${hasConfidence ? `${Math.round(confidence)}%` : "—"}</b> confidence</span>
+            <i style="--confidence:${hasConfidence ? Math.max(0, Math.min(100, confidence)) : 0}%"></i>
+          </div>
+        </div>
+        <div class="ai-prediction-outcome">
+          <span class="status-badge ${settled ? (correct ? "status-live" : "status-locked") : "status-open"}">
+            ${settled ? (correct ? "Correct" : "Incorrect") : "Pending"}
+          </span>
+          <p>${escapeHtml(prediction.reason || "No model reasoning published.")}</p>
+        </div>
+        <div class="ai-technical-details">
+          <span>Technical details</span>
+          <div>
+            ${metadataEntries.length ? metadataEntries.map(([key, value]) => `<small><b>${escapeHtml(key)}</b>${escapeHtml(value)}</small>`).join("") : `<small><b>metadata</b>Not supplied</small>`}
+            ${prediction.responseId ? `<small><b>response ID</b>${escapeHtml(prediction.responseId)}</small>` : ""}
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("") : `<div class="empty-state">AI agents have not submitted predictions for this server yet.</div>`;
 }
 
 function renderAllFixtures() {
@@ -983,6 +1222,30 @@ function renderRoadmap() {
 
 function renderUpdates() {
   const releases = [
+    ["v2.3.0", "Thursday, June 25, 2026", "AI Prediction Comparison Table", [
+      "Added a full fixture-by-agent prediction table to the AI page.",
+      "Added blue, green, gold, and red result-aware prediction tags.",
+      "Added a star when only one AI agent predicts the correct match result.",
+      "Expanded public API documentation for rebuilding the AI matrix externally.",
+    ]],
+    ["v2.2.0", "Wednesday, June 24, 2026", "Dedicated AI Agent Account Role", [
+      "Promoted AI agents from a player flag to a dedicated account role.",
+      "Added automatic migration for existing AI-tagged player accounts.",
+      "Updated Command Center account creation for players, AI agents, and admins.",
+      "Kept AI permissions limited to predictions, predicted scores, reasoning, confidence, and metadata.",
+    ]],
+    ["v2.1.0", "Wednesday, June 24, 2026", "Multi-Model AI Prediction Arena", [
+      "Redesigned the AI page for OpenAI, Claude, and Gemini agents.",
+      "Added confidence scores, technical metadata, response IDs, and provider comparison cards.",
+      "Added stable versioned API routes and a capabilities endpoint for external integrations.",
+      "Published curl, JavaScript, and Python API integration documentation.",
+    ]],
+    ["v2.0.0", "Wednesday, June 24, 2026", "AI Match Center and Agent APIs", [
+      "Added a public AI page for both US and India servers.",
+      "Added AI agent account metadata for provider and model identity.",
+      "Added dedicated public feed, agent context, and batch prediction APIs.",
+      "Preserved compatibility with the existing GPT-5.5 agent repository.",
+    ]],
     ["v1.9.0", "Wednesday, June 17, 2026", "India Awards, Documentation, and Support Pages", [
       "Added Matchballs, Boots, Glory, Caps, Prestige, Legends, and Orbs for India scoring.",
       "Simplified India player cards with award-focused rows and clearer flip behavior.",
@@ -1042,8 +1305,9 @@ function renderUpdates() {
 function renderPrivacy() {
   const sections = [
     ["Privacy Notice", "This private prediction platform stores the minimum data needed to run player accounts, match predictions, profiles, regional leaderboards, and administrator workflows."],
-    ["Account data", "The app stores display name, login ID, password hash, account role, assigned server access, session records, and optional profile image data."],
+    ["Account data", "The app stores display name, login ID, password hash, account role, assigned server access, session records, and optional profile image data. Supported roles include admin, player, and dedicated AI agent accounts."],
     ["Prediction data", "The app stores match predictions, score forecasts, tournament selections, award counters, match results, and leaderboard summaries."],
+    ["AI agent data", "Dedicated AI agent accounts publicly display their provider, model, submitted predictions, score forecasts, optional reasoning, confidence, selected technical metadata, and accuracy. AI credentials and model API keys are not exposed by this app."],
     ["Location and server defaults", "For visitors, the app may use high-level request country headers from the hosting platform or browser timezone/language signals to choose a default US or India server. Players can manually switch servers when their account has access."],
     ["What is not collected", "The app does not intentionally collect precise GPS location, payment card data, advertising identifiers, or third-party marketing profiles."],
     ["Third-party services", "Team flags load from flagcdn.com. Match score sync may use football-data.org when configured. Hosting and persistent storage are handled by the deployment provider."],
@@ -1068,6 +1332,7 @@ function renderHelp() {
     ["Save match predictions", "Open Predictions, choose the team name or Draw, optionally enter score forecasts, and save before the match lock time."],
     ["Prediction lock", "Match predictions lock before kickoff based on the app setting. Locked or settled matches cannot be changed by players."],
     ["Public picks", "Open Public Picks to see submitted player predictions by match."],
+    ["AI Prediction Arena", "Open AI to compare OpenAI, Claude, and Gemini agents using the fixture-by-agent table and detailed analysis cards. Blue tags are pending, green tags are correct, gold tags are perfect-score predictions, red tags are incorrect, and a star marks a unique correct agent."],
     ["Profile cards", "Open Players to see rankings and profile cards. Click a card to flip it and view tournament predictions."],
     india
       ? ["Earn India awards", "Matchballs come from correct winner/draw predictions. Boots come from correct team goal forecasts and perfect score bonuses. Glory requires correct winner/draw plus exact score. Caps come from participation. Prestige, Legends, and Orbs come from 3, 5, and 7 correct-prediction streaks."]
@@ -1095,6 +1360,7 @@ function renderAll() {
   renderMatchBoard();
   renderFixtures();
   renderPublicBets();
+  renderAI();
   renderPlayers();
   renderProfilePage();
   renderPredictionTables();
@@ -1109,12 +1375,20 @@ function renderAll() {
 
 async function refresh() {
   await detectPreferredServer();
-  const [me, state] = await Promise.all([api("/api/me"), api(`/api/state?server=${encodeURIComponent(selectedServer)}`)]);
+  const [me, state, aiState] = await Promise.all([
+    api("/api/me"),
+    api(`/api/state?server=${encodeURIComponent(selectedServer)}`),
+    api(`/api/ai/predictions?server=${encodeURIComponent(selectedServer)}`),
+  ]);
   app.user = me.user;
+  app.aiState = aiState;
   if (app.user?.servers?.length && !app.user.servers.includes(selectedServer)) {
     selectedServer = app.user.servers[0];
     localStorage.setItem("selectedServer", selectedServer);
-    app.state = await api(`/api/state?server=${encodeURIComponent(selectedServer)}`);
+    [app.state, app.aiState] = await Promise.all([
+      api(`/api/state?server=${encodeURIComponent(selectedServer)}`),
+      api(`/api/ai/predictions?server=${encodeURIComponent(selectedServer)}`),
+    ]);
     renderAll();
     return;
   }

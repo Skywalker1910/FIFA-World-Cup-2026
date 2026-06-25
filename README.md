@@ -1,30 +1,44 @@
 # FIFA World Cup 2026
 
-SQLite-backed FIFA World Cup 2026 prediction platform with admin-created player logins, match predictions, score forecasts, public player profiles, leaderboards, regional scoring systems, and optional football-data.org result sync.
+SQLite-backed FIFA World Cup 2026 prediction platform with player accounts, dedicated AI agent accounts, regional prediction systems, public profiles, leaderboards, score sync, and a private Command Center for operations.
 
 ## Product Overview
 
-The app supports two regional experiences from one deployment:
+The app is designed for a small private World Cup prediction group. Players sign in with credentials created by an administrator, submit match predictions before each match locks, maintain public profile cards, and track rankings as the tournament progresses.
 
-- `US`: match prediction entries with dollar-based settlement and ledger tools.
-- `India`: match prediction entries with an achievement-style points system using Matchballs, Boots, Glory, Caps, Prestige, Legends, and Orbs.
+The product supports two regional game servers from one deployment:
 
-Players sign in with credentials created by an administrator, submit match predictions before each match locks, maintain a public profile, and view rankings. Administrators manage users, match results, prediction records, settings, and regional access from the Command Center.
+- `US`: match predictions with dollar-based settlement and ledger tools.
+- `India`: match predictions with an achievement-style points system using Matchballs, Boots, Glory, Caps, Prestige, Legends, and Orbs.
+
+Administrators use the Command Center to manage users, match scores, prediction records, ledger views, settings, and optional score synchronization.
+
+## Core Features
+
+- Public dashboard with live/current matches and upcoming fixtures.
+- Match prediction table with team-name picks, draw option, and score forecasts.
+- Regional server switching for players with access to both `US` and `India`.
+- Public picks view showing player predictions by match.
+- Dedicated AI Prediction Arena with OpenAI, Claude, and Gemini provider cards, a match-by-agent prediction matrix, result-aware tags, score forecasts, reasoning, confidence, technical metadata, and accuracy.
+- Player profile cards with profile images, supported team/player, awards, ranking, and tournament predictions.
+- Tournament fixtures, group tables, and road-to-final views.
+- Command Center for match results, player records, prediction records, settings, and ledger management.
+- Optional football-data.org score synchronization.
+- SQLite persistence with Railway volume support.
 
 ## Application Design
 
-The product uses a simple server-rendered/static frontend architecture:
+The app intentionally uses a compact static frontend with a single Node HTTP server. There is no frontend build step and no separate API framework.
 
-- `index.html`: public application shell for dashboard, predictions, players, groups, road to final, profile, and rules.
-- `app.js`: public app state management, rendering, profile updates, prediction submission, leaderboard rendering, and regional UI behavior.
-- `admin.html`: Command Center shell for administrator workflows.
-- `admin.js`: Command Center rendering and interactions for match results, player records, prediction records, ledger, and settings.
-- `server.js`: HTTP server, API routes, session handling, SQLite access, scoring calculations, football-data.org sync, and static file serving.
-- `styles.css`: shared visual system, responsive layout, player cards, tables, badges, and micro-interactions.
-- `data/fixtures.js`: seeded World Cup 2026 fixture data.
-- `assets/`: app branding assets.
-
-The interface uses a minimal Apple-inspired visual language: light surfaces, rounded cards, subtle borders, compact navigation, clear tables, player profile cards, and badge-based scoring indicators.
+- `index.html`: public application shell.
+- `app.js`: public app state, rendering, profile updates, predictions, leaderboard behavior, and regional UI logic.
+- `admin.html`: Command Center shell.
+- `admin.js`: administrator workflows for results, player records, prediction records, ledger, and settings.
+- `server.js`: HTTP server, API routes, sessions, SQLite access, scoring calculations, sync jobs, and static file serving.
+- `styles.css`: shared visual system, responsive layout, player cards, tables, badges, and document pages.
+- `data/fixtures.js`: seeded FIFA World Cup 2026 fixture data.
+- `assets/`: app logo and static assets.
+- `docs/`: setup, API, deployment, and operations documentation.
 
 ## System Architecture
 
@@ -32,14 +46,15 @@ The interface uses a minimal Apple-inspired visual language: light surfaces, rou
 Browser
   ├─ Public app: /, /index.html, /app.js
   ├─ Command Center: /admin, /admin.html, /admin.js
-  └─ Static assets: /styles.css, /assets/*
+  └─ Static assets: /styles.css, /assets/*, /data/fixtures.js
 
 Node HTTP Server
+  ├─ Static file serving
   ├─ Auth/session APIs
   ├─ Public state APIs
   ├─ Player profile and prediction APIs
   ├─ Command Center APIs
-  ├─ football-data.org sync
+  ├─ football-data.org score sync
   └─ SQLite query layer
 
 SQLite Database
@@ -47,20 +62,20 @@ SQLite Database
   ├─ sessions
   ├─ settings
   ├─ matches
-  ├─ prediction records
-  └─ audit logs
+  ├─ bets / prediction records
+  └─ audit_logs
 ```
 
-The same SQLite database stores both regional experiences. Region-specific records are scoped by server/region fields, while player access is controlled by `server_access`. This keeps deployment and backups simple while preserving separation between `US` and `India` workflows.
+The same SQLite database stores both regional experiences. Prediction records are scoped by `server`, while player access is controlled by `server_access`. This keeps deployment and backups simple while preserving separation between `US` and `India` workflows.
 
 ## Data Model
 
-- `users`: player/admin accounts, display names, roles, server access, profile images, supported team/player, and tournament predictions.
-- `sessions`: browser login sessions.
-- `settings`: app configuration such as lock timing.
+- `users`: full admin, regional admin, player, and AI agent accounts with server access, profile data, and provider/model metadata.
+- `sessions`: browser login sessions stored with HTTP-only cookies.
+- `settings`: app-level configuration such as stake and lock timing.
 - `matches`: fixture metadata, kickoff time, venue, scores, result, status, and source sync data.
-- Prediction records: per-player, per-match, per-region prediction selections and optional score forecasts.
-- `audit_logs`: administrative and player activity history.
+- `bets`: per-player, per-match, per-server prediction records, score forecasts, and optional AI reasoning/provider/model metadata.
+- `audit_logs`: activity history for player and admin actions.
 
 ## Regional Scoring
 
@@ -68,7 +83,7 @@ The same SQLite database stores both regional experiences. Region-specific recor
 
 - Players submit match predictions before lock.
 - The Command Center ledger calculates dollar-based net balances after results are settled.
-- Score forecasts are collected for engagement, but they do not affect US settlement rules right now.
+- Score forecasts are collected for engagement, but they do not currently affect US settlement.
 
 ### India
 
@@ -83,60 +98,29 @@ The same SQLite database stores both regional experiences. Region-specific recor
 
 India rankings are ordered by Matchballs, then Boots, Glory, Orbs, Legends, Prestige, Caps, and display name.
 
-## User Roles
+## Roles
 
-### Full Admin
+- `Full Admin`: access to both servers, admin/player/AI-agent creation, server access assignment, settings, sync, official scores, predictions, and ledger.
+- `Regional Admin`: access to assigned server only, player and AI-agent creation for that server, assigned-server records, predictions, and ledger.
+- `Player`: profile management, match predictions, score forecasts, tournament predictions, and public leaderboard/profile participation.
+- `AI Agent`: dedicated machine account for GitHub Actions or scheduled workers. Can read agent context and submit predictions, predicted scores, reasoning, confidence, and technical metadata for assigned servers. Cannot edit official match results or admin data.
 
-- Accesses both `US` and `India`.
-- Creates players and admins.
-- Assigns regional access.
-- Manages match scores/results, prediction records, settings, player records, and sync.
+Full and regional administrators share the `admin` database role; their server access determines whether they are full or regional administrators. Players and AI agents use distinct `player` and `ai_agent` roles.
 
-### Regional Admin
+## Documentation
 
-- Accesses assigned region only.
-- Creates player accounts only for assigned region.
-- Updates assigned-region player records, prediction records, and ledger views.
-- Cannot create admin accounts or assign another region.
+- `docs/local-setup.md`: local development setup, environment variables, database behavior, and default accounts.
+- `docs/api-reference.md`: app API reference for auth, state, predictions, profile, admin routes, and score sync.
+- `docs/public-api.md`: integration guide for third-party developers using curl, JavaScript, or Python.
+- `docs/deployment.md`: Railway deployment, persistent SQLite volume setup, and production environment variables.
+- `docs/operations.md`: admin workflows, backups, score sync troubleshooting, and production checks.
+- `docs/ai-agents.md`: AI account setup and the dedicated agent API contract.
 
-### Player
-
-- Signs in with admin-created credentials.
-- Submits match predictions before lock.
-- Updates profile details and profile picture.
-- Selects supported team/player.
-- Submits tournament predictions before the tournament prediction lock.
-
-## Prediction Locks
-
-- Match predictions lock server-side before kickoff.
-- Default lock timing is 60 minutes before kickoff.
-- Kickoff values imported into SQLite are treated as Eastern Time.
-- Locked or settled matches cannot be changed by players.
-- Tournament knockout predictions lock according to `PREDICTION_LOCK_AT`.
-
-## Run Locally
-
-For local API testing, copy the example env file first:
+## Quick Start
 
 ```powershell
 Copy-Item .env.example .env
-```
-
-Then edit `.env` and set:
-
-```text
-FOOTBALL_DATA_API_KEY=your-real-football-data-token
-FOOTBALL_DATA_COMPETITION=WC
-FOOTBALL_DATA_SEASON=2026
-FOOTBALL_DATA_SYNC_MODE=auto
-FOOTBALL_DATA_DATE_WINDOW_DAYS=3
-```
-
-The `.env` file is ignored by git, so local API keys are not committed.
-
-```powershell
-node server.js
+npm start
 ```
 
 Open:
@@ -151,117 +135,11 @@ Command Center:
 http://localhost:3000/admin
 ```
 
-If port `3000` is already running an older server, stop it first or run on another port:
-
-```powershell
-$env:PORT=3001
-node server.js
-```
-
-## Default Accounts
+Default full admin:
 
 ```text
-Full admin:
 Login ID: admin
 Password: admin123
-
-US regional admin:
-Login ID: usadmin
-Password: usadmin123
 ```
 
-Use `/admin` to create player accounts. The administrator shares each player's login ID and temporary password directly with the player.
-
-## Railway Deployment
-
-This project includes a `Dockerfile` for Railway. The container installs `sqlite3`, copies static assets, and starts `node server.js`.
-
-1. Push this project to GitHub.
-2. In Railway, create a new project from the GitHub repo.
-3. Add a Railway volume and mount it at:
-
-```text
-/data
-```
-
-4. Add this environment variable:
-
-```text
-SQLITE_DB_PATH=/data/tracker.db
-```
-
-5. Optional football-data.org variables:
-
-```text
-FOOTBALL_DATA_API_KEY=your-football-data-token
-FOOTBALL_DATA_COMPETITION=WC
-FOOTBALL_DATA_SEASON=2026
-FOOTBALL_DATA_SYNC_MINUTES=15
-```
-
-6. Deploy. Railway will provide a public URL. Add a custom domain in Railway if needed, then point DNS to Railway's target.
-
-On a fresh Railway volume, the app automatically seeds:
-
-- Full admin account: `admin` / `admin123`
-- US regional admin account: `usadmin` / `usadmin123`
-- Initial player accounts
-- Seeded fixture history from `data/fixtures.js`
-
-## Persistent Storage
-
-- Local source of truth: `data/tracker.db`
-- Hosted source of truth when `SQLITE_DB_PATH` is set, for example `/data/tracker.db` on Railway
-
-Railway deployments should use a mounted volume so SQLite persists across redeployments. Without a volume, each new deployment starts with a fresh container filesystem.
-
-## football-data.org Sync
-
-The app is wired for football-data.org by default. Create a football-data.org account, copy your API token, and put it in `.env`:
-
-```text
-FOOTBALL_DATA_API_KEY=your-football-data-token
-FOOTBALL_DATA_COMPETITION=WC
-FOOTBALL_DATA_SEASON=2026
-```
-
-The Command Center has a `Sync football-data.org Results` button. The default competition code is `WC` and the default season is `2026`.
-
-The sync updates live/current scores, stores API match status, and only sets the final result when football-data.org reports `FINISHED`.
-
-When `FOOTBALL_DATA_AUTO_SYNC=true` is set, the server automatically syncs scores every `FOOTBALL_DATA_SYNC_MINUTES` minutes. Leave auto-sync off until `/api/sync-status` or the Command Center manual sync confirms your football-data.org plan can access the configured competition.
-
-Railway variables are read at runtime by `server.js`, not during Docker build. After changing `FOOTBALL_DATA_API_KEY`, redeploy or restart the Railway service and confirm `/api/sync-status` shows `"hasKey": true` under `config`.
-
-Check sync status at:
-
-```text
-/api/sync-status
-```
-
-If scores are not loading locally:
-
-1. Confirm `.env` has a real value after the equals sign:
-
-```text
-FOOTBALL_DATA_API_KEY=your-real-football-data-token
-```
-
-2. Restart `node server.js` after editing `.env`. The server reads `.env` only at startup.
-3. Make sure the browser is hitting this app. If `http://localhost:3000/api/sync-status` returns `404`, an older process is using port `3000`; stop it or set `PORT=3001` in `.env`.
-4. If `/api/sync-status` says `sourceMatches: 0`, check `apiErrors` and confirm your football-data.org plan has access to the `WC` competition and `2026` season.
-5. If Node reports `UNABLE_TO_VERIFY_LEAF_SIGNATURE` locally, set `FOOTBALL_DATA_ALLOW_INSECURE_TLS=true` in `.env` for local testing only. Do not use that setting in Railway/production.
-
-Optional overrides:
-
-```text
-FOOTBALL_DATA_BASE_URL=https://api.football-data.org/v4
-SPORTS_API_URL=custom-fixtures-url
-FOOTBALL_DATA_AUTO_SYNC=false
-FOOTBALL_DATA_SYNC_MODE=date-window
-FOOTBALL_DATA_DATE_WINDOW_DAYS=3
-```
-
-## Team Flags
-
-Team flags load in the browser from `flagcdn.com`. Knockout placeholders use generated text badges until real teams are known.
+For complete setup instructions, see `docs/local-setup.md`.

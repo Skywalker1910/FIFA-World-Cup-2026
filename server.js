@@ -95,6 +95,19 @@ const defaultAdmins = [
   { displayName: "US Admin", loginId: "usadmin", password: "usadmin123", serverAccess: "US" },
 ];
 const servers = ["US", "India"];
+const aiProviderProfiles = [
+  { key: "openai", name: "OpenAI", label: "OpenAI Agent", accent: "green" },
+  { key: "anthropic", name: "Anthropic", label: "Claude Agent", accent: "orange" },
+  { key: "google", name: "Google", label: "Gemini Agent", accent: "blue" },
+];
+
+function aiProviderKey(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized.includes("openai") || normalized.includes("gpt")) return "openai";
+  if (normalized.includes("anthropic") || normalized.includes("claude")) return "anthropic";
+  if (normalized.includes("google") || normalized.includes("gemini")) return "google";
+  return normalized.replace(/[^a-z0-9]+/g, "-") || "other";
+}
 
 function normalizeServer(value) {
   return servers.includes(value) ? value : "US";
@@ -302,6 +315,19 @@ function isLocked(match) {
   return Date.now() >= new Date(match.kickoff_at).getTime() - 60 * 60 * 1000;
 }
 
+function isPlaceholderTeamName(teamName) {
+  const normalized = String(teamName || "").trim().toLowerCase();
+  return !normalized
+    || /^(winner|runner-up|runner up|loser)\b/.test(normalized)
+    || /^(tbd|to be decided|team\s*[12])$/.test(normalized)
+    || /placeholder/.test(normalized);
+}
+
+function isSettledMatch(match) {
+  return Boolean(match.result)
+    || ["FT", "AET", "PEN", "FINISHED"].includes(String(match.match_status || "").toUpperCase());
+}
+
 async function initDb() {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   await runSql(`
@@ -311,13 +337,16 @@ async function initDb() {
       login_id TEXT NOT NULL UNIQUE,
       display_name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin','player')),
+      role TEXT NOT NULL CHECK(role IN ('admin','player','ai_agent')),
       server_access TEXT NOT NULL DEFAULT 'US',
       avatar_data TEXT,
       supported_team TEXT,
       supported_player TEXT,
       golden_boot_predictions TEXT,
       knockout_predictions TEXT,
+      is_ai_agent INTEGER NOT NULL DEFAULT 0,
+      ai_provider TEXT,
+      ai_model TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -358,6 +387,12 @@ async function initDb() {
       pick TEXT NOT NULL CHECK(pick IN ('Team 1','Team 2','Draw')),
       predicted_team1_score INTEGER,
       predicted_team2_score INTEGER,
+      prediction_reason TEXT,
+      prediction_provider TEXT,
+      prediction_model TEXT,
+      prediction_confidence REAL,
+      prediction_metadata TEXT,
+      prediction_response_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(user_id, match_id, server),
@@ -391,12 +426,57 @@ async function initDb() {
     "ALTER TABLE users ADD COLUMN supported_player TEXT;",
     "ALTER TABLE users ADD COLUMN golden_boot_predictions TEXT;",
     "ALTER TABLE users ADD COLUMN knockout_predictions TEXT;",
+    "ALTER TABLE users ADD COLUMN is_ai_agent INTEGER NOT NULL DEFAULT 0;",
+    "ALTER TABLE users ADD COLUMN ai_provider TEXT;",
+    "ALTER TABLE users ADD COLUMN ai_model TEXT;",
   ]) {
     try {
       await runSql(statement);
     } catch (error) {
       if (!String(error.message).includes("duplicate column name")) throw error;
     }
+  }
+
+  const usersTableRows = await runSql("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users';", true);
+  if (!String(usersTableRows[0]?.sql || "").includes("'ai_agent'")) {
+    await runSql(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        login_id TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('admin','player','ai_agent')),
+        server_access TEXT NOT NULL DEFAULT 'US',
+        avatar_data TEXT,
+        supported_team TEXT,
+        supported_player TEXT,
+        golden_boot_predictions TEXT,
+        knockout_predictions TEXT,
+        is_ai_agent INTEGER NOT NULL DEFAULT 0,
+        ai_provider TEXT,
+        ai_model TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO users_new(
+        id, login_id, display_name, password_hash, role, server_access, avatar_data,
+        supported_team, supported_player, golden_boot_predictions, knockout_predictions,
+        is_ai_agent, ai_provider, ai_model, is_active, created_at
+      )
+      SELECT
+        id, login_id, display_name, password_hash,
+        CASE WHEN role = 'player' AND is_ai_agent = 1 THEN 'ai_agent' ELSE role END,
+        server_access, avatar_data, supported_team, supported_player, golden_boot_predictions,
+        knockout_predictions, CASE WHEN is_ai_agent = 1 THEN 1 ELSE 0 END,
+        ai_provider, ai_model, is_active, created_at
+      FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_new RENAME TO users;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
   }
 
   try {
@@ -406,7 +486,9 @@ async function initDb() {
   }
   await runSql(`
     UPDATE users SET server_access = 'US,India' WHERE role = 'admin' AND (server_access IS NULL OR server_access = '');
-    UPDATE users SET server_access = 'US' WHERE role = 'player' AND (server_access IS NULL OR server_access = '');
+    UPDATE users SET server_access = 'US' WHERE role IN ('player','ai_agent') AND (server_access IS NULL OR server_access = '');
+    UPDATE users SET is_ai_agent = 1 WHERE role = 'ai_agent';
+    UPDATE users SET is_ai_agent = 0, ai_provider = NULL, ai_model = NULL WHERE role != 'ai_agent';
   `);
 
   const betColumns = await runSql("PRAGMA table_info(bets);", true);
@@ -422,14 +504,20 @@ async function initDb() {
         pick TEXT NOT NULL CHECK(pick IN ('Team 1','Team 2','Draw')),
         predicted_team1_score INTEGER,
         predicted_team2_score INTEGER,
+        prediction_reason TEXT,
+        prediction_provider TEXT,
+        prediction_model TEXT,
+        prediction_confidence REAL,
+        prediction_metadata TEXT,
+        prediction_response_id TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, match_id, server),
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(match_id) REFERENCES matches(id)
       );
-      INSERT INTO bets(id, user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, created_at, updated_at)
-      SELECT id, user_id, match_id, 'US', pick, NULL, NULL, created_at, updated_at FROM bets_old;
+      INSERT INTO bets(id, user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, prediction_reason, prediction_provider, prediction_model, prediction_confidence, prediction_metadata, prediction_response_id, created_at, updated_at)
+      SELECT id, user_id, match_id, 'US', pick, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, created_at, updated_at FROM bets_old;
       DROP TABLE bets_old;
       COMMIT;
     `);
@@ -441,6 +529,24 @@ async function initDb() {
   }
   if (!migratedBetColumns.some((column) => column.name === "predicted_team2_score")) {
     await runSql("ALTER TABLE bets ADD COLUMN predicted_team2_score INTEGER;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "prediction_reason")) {
+    await runSql("ALTER TABLE bets ADD COLUMN prediction_reason TEXT;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "prediction_provider")) {
+    await runSql("ALTER TABLE bets ADD COLUMN prediction_provider TEXT;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "prediction_model")) {
+    await runSql("ALTER TABLE bets ADD COLUMN prediction_model TEXT;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "prediction_confidence")) {
+    await runSql("ALTER TABLE bets ADD COLUMN prediction_confidence REAL;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "prediction_metadata")) {
+    await runSql("ALTER TABLE bets ADD COLUMN prediction_metadata TEXT;");
+  }
+  if (!migratedBetColumns.some((column) => column.name === "prediction_response_id")) {
+    await runSql("ALTER TABLE bets ADD COLUMN prediction_response_id TEXT;");
   }
 
   await seedDefaultAdmins();
@@ -518,7 +624,8 @@ async function currentUser(request) {
   if (!token) return null;
   const rows = await runSql(`
     SELECT users.id, users.login_id, users.display_name, users.role, users.server_access, users.avatar_data,
-           users.supported_team, users.supported_player, users.golden_boot_predictions, users.knockout_predictions
+           users.supported_team, users.supported_player, users.golden_boot_predictions, users.knockout_predictions,
+           users.is_ai_agent, users.ai_provider, users.ai_model
     FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ${sqlValue(token)}
@@ -540,6 +647,9 @@ function publicUser(user) {
     supported_player: user.supported_player || "",
     golden_boot_predictions: parseJsonField(user.golden_boot_predictions, []),
     knockout_predictions: parseJsonField(user.knockout_predictions, { quarterfinalists: [], semifinalists: [], finalists: [], winner: "" }),
+    is_ai_agent: user.role === "ai_agent" || Boolean(user.is_ai_agent),
+    ai_provider: user.ai_provider || "",
+    ai_model: user.ai_model || "",
   } : null;
 }
 
@@ -631,14 +741,14 @@ async function appState(user = null, selectedServer = "US") {
   const [settingsRows, matches, users, bets] = await Promise.all([
     runSql("SELECT key, value FROM settings;", true),
     runSql("SELECT * FROM matches ORDER BY id;", true),
-    runSql("SELECT id, login_id, display_name, role, server_access, avatar_data, supported_team, supported_player, golden_boot_predictions, knockout_predictions, is_active, created_at FROM users ORDER BY role, display_name;", true),
+    runSql("SELECT id, login_id, display_name, role, server_access, avatar_data, supported_team, supported_player, golden_boot_predictions, knockout_predictions, is_ai_agent, ai_provider, ai_model, is_active, created_at FROM users ORDER BY role, display_name;", true),
     runSql(`SELECT * FROM bets WHERE server = ${sqlValue(server)} ORDER BY match_id, user_id;`, true),
   ]);
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
   const stake = Number(settings.stake || 1);
   const allUsersWithAccess = users.map((row) => ({ ...row, servers: parseServerAccess(row.server_access, row.role) }));
   const usersWithAccess = user?.role === "admin" && !isFullAdmin(user)
-    ? allUsersWithAccess.filter((row) => row.id === user.id || (row.role === "player" && row.servers.includes(server)))
+    ? allUsersWithAccess.filter((row) => row.id === user.id || (["player", "ai_agent"].includes(row.role) && row.servers.includes(server)))
     : allUsersWithAccess;
   const players = usersWithAccess.filter((row) => row.role === "player" && row.is_active && row.servers.includes(server));
   const summaries = players.map((player) => ({
@@ -650,6 +760,9 @@ async function appState(user = null, selectedServer = "US") {
     supported_player: player.supported_player || "",
     golden_boot_predictions: parseJsonField(player.golden_boot_predictions, []),
     knockout_predictions: parseJsonField(player.knockout_predictions, { quarterfinalists: [], semifinalists: [], finalists: [], winner: "" }),
+    is_ai_agent: Boolean(player.is_ai_agent),
+    ai_provider: player.ai_provider || "",
+    ai_model: player.ai_model || "",
     bets_entered: 0,
     settled: 0,
     correct: 0,
@@ -691,6 +804,12 @@ async function appState(user = null, selectedServer = "US") {
       pick: bet.pick,
       predictedTeam1Score: bet.predicted_team1_score,
       predictedTeam2Score: bet.predicted_team2_score,
+      reason: bet.prediction_reason || "",
+      provider: bet.prediction_provider || "",
+      model: bet.prediction_model || "",
+      confidence: bet.prediction_confidence,
+      metadata: parseJsonField(bet.prediction_metadata, {}),
+      responseId: bet.prediction_response_id || "",
     }]));
     return {
       id: match.id,
@@ -764,6 +883,156 @@ async function appState(user = null, selectedServer = "US") {
     players,
     leaderboard: summaries,
     sync: lastSyncStatus,
+  };
+}
+
+async function aiPredictionsState(selectedServer = "US") {
+  const server = normalizeServer(selectedServer);
+  const [userRows, predictionRows] = await Promise.all([
+    runSql(`
+      SELECT id, login_id, display_name, server_access, avatar_data, supported_team, supported_player,
+             ai_provider, ai_model, created_at
+      FROM users
+      WHERE role = 'ai_agent' AND is_active = 1
+      ORDER BY display_name;
+    `, true),
+    runSql(`
+      SELECT bets.id, bets.user_id, bets.match_id, bets.server, bets.pick,
+             bets.predicted_team1_score, bets.predicted_team2_score,
+             bets.prediction_reason, bets.prediction_provider, bets.prediction_model,
+             bets.prediction_confidence, bets.prediction_metadata, bets.prediction_response_id,
+             bets.created_at, bets.updated_at,
+             users.display_name, users.avatar_data, users.ai_provider, users.ai_model,
+             matches.stage, matches.group_name, matches.match_date, matches.kickoff, matches.kickoff_at,
+             matches.venue, matches.team1, matches.team2, matches.team1_score, matches.team2_score,
+             matches.result, matches.match_status
+      FROM bets
+      JOIN users ON users.id = bets.user_id
+      JOIN matches ON matches.id = bets.match_id
+      WHERE bets.server = ${sqlValue(server)}
+        AND users.role = 'ai_agent'
+        AND users.is_active = 1
+      ORDER BY matches.id, users.display_name;
+    `, true),
+  ]);
+
+  const agents = userRows
+    .filter((row) => parseServerAccess(row.server_access, "player").includes(server))
+    .map((row) => {
+      const predictions = predictionRows.filter((prediction) => prediction.user_id === row.id);
+      const settled = predictions.filter((prediction) => prediction.result);
+      const correct = settled.filter((prediction) => prediction.pick === prediction.result).length;
+      return {
+        id: row.id,
+        displayName: row.display_name,
+        avatarData: row.avatar_data || "",
+        supportedTeam: row.supported_team || "",
+        supportedPlayer: row.supported_player || "",
+        provider: row.ai_provider || "AI",
+        model: row.ai_model || "",
+        predictionsEntered: predictions.length,
+        settled: settled.length,
+        correct,
+        accuracy: settled.length ? correct / settled.length : 0,
+        createdAt: row.created_at,
+      };
+    });
+
+  const predictions = predictionRows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    agentName: row.display_name,
+    avatarData: row.avatar_data || "",
+    provider: row.prediction_provider || row.ai_provider || "AI",
+    model: row.prediction_model || row.ai_model || "",
+    matchId: row.match_id,
+    server: row.server,
+    pick: row.pick,
+    predictedTeam1Score: row.predicted_team1_score,
+    predictedTeam2Score: row.predicted_team2_score,
+    reason: row.prediction_reason || "",
+    confidence: row.prediction_confidence,
+    metadata: parseJsonField(row.prediction_metadata, {}),
+    responseId: row.prediction_response_id || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    match: {
+      stage: row.stage,
+      group: row.group_name,
+      date: row.match_date,
+      kickoff: row.kickoff,
+      kickoffAt: row.kickoff_at,
+      venue: row.venue,
+      team1: row.team1,
+      team2: row.team2,
+      team1Score: row.team1_score,
+      team2Score: row.team2_score,
+      result: row.result,
+      status: row.match_status,
+      locked: isLocked({ kickoff_at: row.kickoff_at }),
+    },
+  }));
+
+  return {
+    ok: true,
+    server,
+    providers: aiProviderProfiles.map((profile) => ({
+      ...profile,
+      agentCount: agents.filter((agent) => aiProviderKey(agent.provider) === profile.key).length,
+      predictionCount: predictions.filter((prediction) => aiProviderKey(prediction.provider) === profile.key).length,
+    })),
+    agents,
+    predictions,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function aiPredictionMetadata(user, body = {}) {
+  if (user?.role !== "ai_agent") {
+    return { reason: null, provider: null, model: null, confidence: null, metadata: null, responseId: null };
+  }
+  const confidenceValue = body.confidence === null || body.confidence === undefined || body.confidence === ""
+    ? null
+    : Number(body.confidence);
+  if (confidenceValue !== null && (!Number.isFinite(confidenceValue) || confidenceValue < 0 || confidenceValue > 100)) {
+    throw new Error("Confidence must be a number from 0 to 100");
+  }
+  const rawMetadata = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+    ? body.metadata
+    : {};
+  const metadataJson = JSON.stringify(rawMetadata);
+  if (metadataJson.length > 8000) throw new Error("Prediction metadata is too large");
+  return {
+    reason: String(body.reason || "").trim().slice(0, 1000) || null,
+    provider: String(user.ai_provider || body.provider || "AI").trim().slice(0, 80) || "AI",
+    model: String(user.ai_model || body.model || "").trim().slice(0, 120) || null,
+    confidence: confidenceValue,
+    metadata: metadataJson === "{}" ? null : metadataJson,
+    responseId: String(body.responseId || "").trim().slice(0, 180) || null,
+  };
+}
+
+async function validateAgentPrediction(user, body, server) {
+  const matchId = Number(body.matchId);
+  if (!["Team 1", "Team 2", "Draw"].includes(body.pick)) {
+    throw new Error(`Invalid pick for match ${body.matchId}`);
+  }
+  const matches = await runSql(`SELECT * FROM matches WHERE id = ${sqlValue(matchId)};`, true);
+  const match = matches[0];
+  if (!match) throw new Error(`Match ${body.matchId} was not found`);
+  if (isLocked(match)) throw new Error(`Predictions are locked for match ${body.matchId}`);
+  if (isSettledMatch(match)) throw new Error(`Match ${body.matchId} is already settled`);
+  if (isPlaceholderTeamName(match.team1) || isPlaceholderTeamName(match.team2)) {
+    throw new Error(`Match ${body.matchId} does not have confirmed teams`);
+  }
+  if (!parseServerAccess(user.server_access, user.role).includes(server)) {
+    throw new Error(`Agent does not have access to ${server}`);
+  }
+  return {
+    match,
+    predictedTeam1Score: nullableScore(body.predictedTeam1Score),
+    predictedTeam2Score: nullableScore(body.predictedTeam2Score),
+    metadata: aiPredictionMetadata(user, body),
   };
 }
 
@@ -1021,7 +1290,7 @@ function serveStatic(request, response) {
 async function router(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
 
-  if (request.method === "POST" && url.pathname === "/api/login") {
+  if (request.method === "POST" && ["/api/login", "/api/v1/auth/login"].includes(url.pathname)) {
     const body = await readBody(request);
     const users = await runSql(`SELECT * FROM users WHERE login_id = ${sqlValue(body.loginId)} AND is_active = 1;`, true);
     const user = users[0];
@@ -1038,7 +1307,7 @@ async function router(request, response) {
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/api/logout") {
+  if (request.method === "POST" && ["/api/logout", "/api/v1/auth/logout"].includes(url.pathname)) {
     const token = parseCookies(request)[sessionCookie];
     if (token) await runSql(`DELETE FROM sessions WHERE token = ${sqlValue(token)};`);
     const secureClearFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
@@ -1046,7 +1315,7 @@ async function router(request, response) {
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/api/me") {
+  if (request.method === "GET" && ["/api/me", "/api/v1/me"].includes(url.pathname)) {
     sendJson(response, 200, { user: publicUser(await currentUser(request)) });
     return;
   }
@@ -1116,9 +1385,139 @@ async function router(request, response) {
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/api/state") {
+  if (request.method === "GET" && ["/api/state", "/api/v1/state"].includes(url.pathname)) {
     const user = await currentUser(request);
     sendJson(response, 200, await appState(user, requestServer(url, user)));
+    return;
+  }
+
+  if (request.method === "GET" && ["/api/ai/predictions", "/api/v1/ai/predictions"].includes(url.pathname)) {
+    sendJson(response, 200, await aiPredictionsState(normalizeServer(url.searchParams.get("server"))));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/capabilities") {
+    sendJson(response, 200, {
+      ok: true,
+      apiVersion: "v1",
+      servers,
+      authentication: "HTTP-only session cookie from POST /api/login",
+      providers: aiProviderProfiles,
+      prediction: {
+        picks: ["Team 1", "Team 2", "Draw"],
+        confidenceRange: [0, 100],
+        metadata: {
+          type: "object",
+          suggestedFields: ["riskLevel", "keyFactors", "expectedGoals", "formationNotes", "dataCutoff", "temperature"],
+        },
+      },
+      endpoints: {
+        login: "POST /api/v1/auth/login",
+        logout: "POST /api/v1/auth/logout",
+        currentUser: "GET /api/v1/me",
+        state: "GET /api/v1/state?server=US",
+        agentContext: "GET /api/v1/agent/context?server=US",
+        submitAgentPredictions: "POST /api/v1/agent/predictions",
+        publicAiPredictions: "GET /api/v1/ai/predictions?server=US",
+        health: "GET /health",
+      },
+    });
+    return;
+  }
+
+  if (request.method === "GET" && ["/api/agent/context", "/api/v1/agent/context"].includes(url.pathname)) {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    if (user.role !== "ai_agent") {
+      sendJson(response, 403, { ok: false, error: "AI agent account required" });
+      return;
+    }
+    const server = requestServer(url, user);
+    const state = await appState(user, server);
+    sendJson(response, 200, {
+      ok: true,
+      user: publicUser(user),
+      server,
+      settings: state.settings,
+      fixtures: state.fixtures.map((fixture) => {
+        const placeholderTeams = isPlaceholderTeamName(fixture.team1) || isPlaceholderTeamName(fixture.team2);
+        const settled = Boolean(fixture.result)
+          || ["FT", "AET", "PEN", "FINISHED"].includes(String(fixture.status || "").toUpperCase());
+        return {
+          ...fixture,
+          eligibleForAgent: !fixture.locked && !settled && !fixture.myPrediction && !placeholderTeams,
+          eligibilityReasons: [
+            ...(fixture.locked ? ["locked"] : []),
+            ...(settled ? ["ended or settled"] : []),
+            ...(fixture.myPrediction ? ["already predicted"] : []),
+            ...(placeholderTeams ? ["placeholder or unconfirmed team"] : []),
+          ],
+        };
+      }),
+    });
+    return;
+  }
+
+  if (request.method === "POST" && ["/api/agent/predictions", "/api/v1/agent/predictions"].includes(url.pathname)) {
+    const user = await requireUser(request, response);
+    if (!user) return;
+    if (user.role !== "ai_agent") {
+      sendJson(response, 403, { ok: false, error: "AI agent account required" });
+      return;
+    }
+    const body = await readBody(request);
+    const server = requestServer(new URL(`/?server=${encodeURIComponent(body.server || "")}`, `http://${request.headers.host}`), user);
+    const submittedPredictions = Array.isArray(body.predictions) ? body.predictions : [body];
+    if (!submittedPredictions.length) {
+      sendJson(response, 400, { ok: false, error: "At least one prediction is required" });
+      return;
+    }
+
+    try {
+      const validated = [];
+      for (const prediction of submittedPredictions) {
+        const result = await validateAgentPrediction(user, {
+          ...prediction,
+          provider: prediction.provider || body.provider,
+          model: prediction.model || body.model,
+          confidence: prediction.confidence ?? body.confidence,
+          metadata: prediction.metadata || body.metadata,
+          responseId: prediction.responseId || body.responseId,
+        }, server);
+        validated.push({ prediction, ...result });
+      }
+
+      const statements = validated.map(({ prediction, match, predictedTeam1Score, predictedTeam2Score, metadata }) => `
+        INSERT INTO bets(user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, prediction_reason, prediction_provider, prediction_model, prediction_confidence, prediction_metadata, prediction_response_id, updated_at)
+        VALUES (${user.id}, ${match.id}, ${sqlValue(server)}, ${sqlValue(prediction.pick)}, ${sqlValue(predictedTeam1Score)}, ${sqlValue(predictedTeam2Score)}, ${sqlValue(metadata.reason)}, ${sqlValue(metadata.provider)}, ${sqlValue(metadata.model)}, ${sqlValue(metadata.confidence)}, ${sqlValue(metadata.metadata)}, ${sqlValue(metadata.responseId)}, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, match_id, server) DO UPDATE SET
+          pick = excluded.pick,
+          predicted_team1_score = excluded.predicted_team1_score,
+          predicted_team2_score = excluded.predicted_team2_score,
+          prediction_reason = excluded.prediction_reason,
+          prediction_provider = excluded.prediction_provider,
+          prediction_model = excluded.prediction_model,
+          prediction_confidence = excluded.prediction_confidence,
+          prediction_metadata = excluded.prediction_metadata,
+          prediction_response_id = excluded.prediction_response_id,
+          updated_at = CURRENT_TIMESTAMP;
+      `).join("\n");
+      await runSql(statements);
+      await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'agent.predictions.saved', ${sqlValue(JSON.stringify({
+        server,
+        count: validated.length,
+        responseId: body.responseId || null,
+        matchIds: validated.map(({ match }) => match.id),
+      }))});`);
+      sendJson(response, 200, {
+        ok: true,
+        submitted: validated.length,
+        state: await appState(user, server),
+        ai: await aiPredictionsState(server),
+      });
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: error.message });
+    }
     return;
   }
 
@@ -1130,14 +1529,15 @@ async function router(request, response) {
   if (request.method === "POST" && url.pathname === "/api/bets") {
     const user = await requireUser(request, response);
     if (!user) return;
-    if (user.role !== "player") {
-      sendJson(response, 403, { ok: false, error: "Only player accounts can place bets" });
+    if (!["player", "ai_agent"].includes(user.role)) {
+      sendJson(response, 403, { ok: false, error: "Only player and AI agent accounts can place predictions" });
       return;
     }
     const body = await readBody(request);
     const server = requestServer(new URL(`/?server=${encodeURIComponent(body.server || "")}`, `http://${request.headers.host}`), user);
     const predictedTeam1Score = nullableScore(body.predictedTeam1Score);
     const predictedTeam2Score = nullableScore(body.predictedTeam2Score);
+    const predictionMetadata = aiPredictionMetadata(user, body);
     if (!["Team 1", "Team 2", "Draw"].includes(body.pick)) {
       sendJson(response, 400, { ok: false, error: "Invalid pick" });
       return;
@@ -1153,12 +1553,18 @@ async function router(request, response) {
       return;
     }
     await runSql(`
-      INSERT INTO bets(user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, updated_at)
-      VALUES (${user.id}, ${match.id}, ${sqlValue(server)}, ${sqlValue(body.pick)}, ${sqlValue(predictedTeam1Score)}, ${sqlValue(predictedTeam2Score)}, CURRENT_TIMESTAMP)
+      INSERT INTO bets(user_id, match_id, server, pick, predicted_team1_score, predicted_team2_score, prediction_reason, prediction_provider, prediction_model, prediction_confidence, prediction_metadata, prediction_response_id, updated_at)
+      VALUES (${user.id}, ${match.id}, ${sqlValue(server)}, ${sqlValue(body.pick)}, ${sqlValue(predictedTeam1Score)}, ${sqlValue(predictedTeam2Score)}, ${sqlValue(predictionMetadata.reason)}, ${sqlValue(predictionMetadata.provider)}, ${sqlValue(predictionMetadata.model)}, ${sqlValue(predictionMetadata.confidence)}, ${sqlValue(predictionMetadata.metadata)}, ${sqlValue(predictionMetadata.responseId)}, CURRENT_TIMESTAMP)
       ON CONFLICT(user_id, match_id, server) DO UPDATE SET
         pick = excluded.pick,
         predicted_team1_score = excluded.predicted_team1_score,
         predicted_team2_score = excluded.predicted_team2_score,
+        prediction_reason = excluded.prediction_reason,
+        prediction_provider = excluded.prediction_provider,
+        prediction_model = excluded.prediction_model,
+        prediction_confidence = excluded.prediction_confidence,
+        prediction_metadata = excluded.prediction_metadata,
+        prediction_response_id = excluded.prediction_response_id,
         updated_at = CURRENT_TIMESTAMP;
     `);
     await runSql(`INSERT INTO audit_logs(user_id, action, details) VALUES (${user.id}, 'bet.saved', ${sqlValue(JSON.stringify({ ...body, server, predictedTeam1Score, predictedTeam2Score }))});`);
@@ -1175,17 +1581,21 @@ async function router(request, response) {
       return;
     }
     const fullAdmin = isFullAdmin(admin);
-    const role = fullAdmin && body.role === "admin" ? "admin" : "player";
+    const requestedRole = ["admin", "player", "ai_agent"].includes(body.role) ? body.role : "player";
+    const role = fullAdmin ? requestedRole : requestedRole === "ai_agent" ? "ai_agent" : "player";
     const serverAccess = fullAdmin
       ? serverAccessValue(body.serverAccess, role)
       : parseServerAccess(admin.server_access, admin.role).join(",");
-    if (!fullAdmin && role !== "player") {
-      sendJson(response, 403, { ok: false, error: "Sub-admins can only create player accounts" });
+    if (!fullAdmin && !["player", "ai_agent"].includes(role)) {
+      sendJson(response, 403, { ok: false, error: "Regional admins can only create player or AI agent accounts" });
       return;
     }
+    const isAiAgent = role === "ai_agent";
+    const aiProvider = isAiAgent ? String(body.aiProvider || "OpenAI").trim().slice(0, 80) : null;
+    const aiModel = isAiAgent ? String(body.aiModel || "").trim().slice(0, 120) : null;
     await runSql(`
-      INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_active)
-      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(role)}, ${sqlValue(serverAccess)}, 1);
+      INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_ai_agent, ai_provider, ai_model, is_active)
+      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(role)}, ${sqlValue(serverAccess)}, ${sqlValue(isAiAgent ? 1 : 0)}, ${sqlValue(aiProvider)}, ${sqlValue(aiModel)}, 1);
     `);
     sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
@@ -1205,20 +1615,27 @@ async function router(request, response) {
     if (!isFullAdmin(admin)) {
       const adminServers = parseServerAccess(admin.server_access, admin.role);
       const targetServers = parseServerAccess(targetUser.server_access, targetUser.role);
-      if (targetUser.role !== "player" || !targetServers.some((server) => adminServers.includes(server))) {
-        sendJson(response, 403, { ok: false, error: "You can only update player records in your assigned server" });
+      if (!["player", "ai_agent"].includes(targetUser.role) || !targetServers.some((server) => adminServers.includes(server))) {
+        sendJson(response, 403, { ok: false, error: "You can only update player or AI agent records in your assigned server" });
         return;
       }
       delete body.role;
       delete body.serverAccess;
     }
+    const nextRole = body.role || targetUser.role;
+    const aiAccountSql = nextRole === "ai_agent"
+      ? `is_ai_agent = 1,
+          ai_provider = COALESCE(${body.aiProvider === undefined ? "NULL" : sqlValue(String(body.aiProvider || "").trim().slice(0, 80))}, ai_provider),
+          ai_model = COALESCE(${body.aiModel === undefined ? "NULL" : sqlValue(String(body.aiModel || "").trim().slice(0, 120))}, ai_model),`
+      : "is_ai_agent = 0, ai_provider = NULL, ai_model = NULL,";
     const passwordSql = body.password ? `, password_hash = ${sqlValue(hashPassword(body.password))}` : "";
     await runSql(`
       UPDATE users
       SET login_id = COALESCE(${sqlValue(body.loginId)}, login_id),
           display_name = COALESCE(${sqlValue(body.displayName)}, display_name),
-          role = COALESCE(${body.role === "admin" ? "'admin'" : body.role === "player" ? "'player'" : "NULL"}, role),
+          role = COALESCE(${body.role === "admin" ? "'admin'" : body.role === "player" ? "'player'" : body.role === "ai_agent" ? "'ai_agent'" : "NULL"}, role),
           server_access = COALESCE(${body.serverAccess === undefined ? "NULL" : sqlValue(serverAccessValue(body.serverAccess, body.role))}, server_access),
+          ${aiAccountSql}
           is_active = COALESCE(${body.isActive === undefined ? "NULL" : sqlValue(body.isActive ? 1 : 0)}, is_active)
           ${passwordSql}
       WHERE id = ${sqlValue(id)};
@@ -1290,8 +1707,8 @@ async function router(request, response) {
       runSql(`SELECT id, role, server_access FROM users WHERE id = ${sqlValue(userId)};`, true),
       runSql(`SELECT id FROM matches WHERE id = ${sqlValue(matchId)};`, true),
     ]);
-    if (!users[0] || users[0].role !== "player") {
-      sendJson(response, 400, { ok: false, error: "Bet must belong to a player account" });
+    if (!users[0] || !["player", "ai_agent"].includes(users[0].role)) {
+      sendJson(response, 400, { ok: false, error: "Prediction must belong to a player or AI agent account" });
       return;
     }
     if (!parseServerAccess(users[0].server_access, users[0].role).includes(server)) {
@@ -1395,7 +1812,7 @@ async function router(request, response) {
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/health") {
+  if (request.method === "GET" && ["/health", "/api/v1/health"].includes(url.pathname)) {
     sendJson(response, 200, { ok: true, status: "healthy" });
     return;
   }

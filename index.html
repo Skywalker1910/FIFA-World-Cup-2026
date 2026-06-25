@@ -21,6 +21,7 @@
           <button class="nav-tab active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i>Dashboard</button>
           <button class="nav-tab" data-view="fixtures" type="button"><i data-lucide="ticket-check"></i>Predictions</button>
           <button class="nav-tab" data-view="publicBets" type="button"><i data-lucide="list-checks"></i>Public Picks</button>
+          <button class="nav-tab" data-view="ai" type="button"><i data-lucide="bot"></i>AI</button>
           <button class="nav-tab" data-view="tournament" type="button"><i data-lucide="calendar-days"></i>Tournament</button>
           <button class="nav-tab" data-view="groups" type="button"><i data-lucide="table-2"></i>Groups</button>
           <button class="nav-tab" data-view="players" type="button"><i data-lucide="users-round"></i>Players</button>
@@ -253,6 +254,50 @@
           </section>
         </section>
 
+        <section class="view" id="aiView">
+          <section class="ai-hero">
+            <div>
+              <span class="ai-eyebrow"><i data-lucide="sparkles"></i>Multi-Model Intelligence</span>
+              <h3>AI Prediction Arena</h3>
+              <p>Compare match predictions, score forecasts, reasoning, confidence, and performance from OpenAI, Claude, and Gemini agents.</p>
+            </div>
+            <div class="ai-hero-side">
+              <div class="ai-server-chip"><span class="server-dot"></span><strong id="aiServerLabel">US Server</strong></div>
+              <div class="ai-summary-grid">
+                <div><strong id="aiActiveAgents">0</strong><span>Active agents</span></div>
+                <div><strong id="aiTotalPredictions">0</strong><span>Predictions</span></div>
+                <div><strong id="aiAverageConfidence">—</strong><span>Avg. confidence</span></div>
+              </div>
+            </div>
+          </section>
+          <div class="ai-agent-grid" id="aiAgentCards"></div>
+          <section class="panel ai-matrix-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="ai-section-label">Comparison Table</span>
+                <h3>AI Predictions by Match</h3>
+              </div>
+              <span>Blue pending · green correct · gold perfect · red incorrect</span>
+            </div>
+            <div class="table-wrap">
+              <table class="fixture-table ai-prediction-table">
+                <thead id="aiPredictionsHead"></thead>
+                <tbody id="aiPredictionsBody"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel ai-predictions-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="ai-section-label">Prediction Stream</span>
+                <h3>Agent Analysis</h3>
+              </div>
+              <span id="aiPredictionsLabel">All submitted AI predictions</span>
+            </div>
+            <div class="ai-predictions-list" id="aiPredictionsList"></div>
+          </section>
+        </section>
+
         <section class="view" id="tournamentView">
           <section class="panel tournament-panel">
             <div class="panel-heading">
@@ -291,7 +336,7 @@
               <span><i data-lucide="newspaper"></i> Product Changelog</span>
               <h3>Updates</h3>
               <p>Release notes, fixes, patches, and feature changes for the FIFA World Cup 2026 predictions platform.</p>
-              <small class="doc-updated">Last updated: June 17, 2026</small>
+              <small class="doc-updated">Last updated: June 24, 2026</small>
             </div>
             <div class="release-timeline" id="updatesContent"></div>
           </div>
@@ -303,7 +348,7 @@
               <span><i data-lucide="shield-check"></i> Transparency & Data</span>
               <h3>Privacy Policy</h3>
               <p>How account data, prediction records, profile details, sessions, and high-level server defaults are handled.</p>
-              <small class="doc-updated">Last updated: June 17, 2026</small>
+              <small class="doc-updated">Last updated: June 24, 2026</small>
             </div>
             <div class="document-content" id="privacyContent"></div>
           </div>
@@ -315,7 +360,7 @@
               <span><i data-lucide="circle-help"></i> Player Guide</span>
               <h3>Help</h3>
               <p>How to sign in, switch servers, save predictions, update your profile, and earn in-game awards.</p>
-              <small class="doc-updated">Last updated: June 17, 2026</small>
+              <small class="doc-updated">Last updated: June 24, 2026</small>
             </div>
             <div class="help-grid" id="helpContent"></div>
           </div>

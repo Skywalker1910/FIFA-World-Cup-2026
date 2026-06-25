@@ -96,6 +96,12 @@ function isFullAdmin() {
   return app.user?.role === "admin" && (app.user.servers || []).length > 1;
 }
 
+function accountRoleLabel(role) {
+  if (role === "admin") return "Admin";
+  if (role === "ai_agent") return "AI Agent";
+  return "Player";
+}
+
 function scoreValue(value) {
   return scoringMode() === "points" ? `${Number(value || 0)} pts` : formatMoney(value);
 }
@@ -153,12 +159,12 @@ function renderAccount() {
   elements.accountLabel.textContent = app.user ? `${app.user.display_name} (${app.user.role}) · ${app.state?.settings?.server || selectedServer}` : "Not signed in";
   elements.loginPanel.hidden = isAdmin || loginDismissed;
   elements.adminContent.style.display = isAdmin ? "" : "none";
-  elements.logoutButton.style.display = app.user ? "" : "none";
+  elements.logoutButton.hidden = !app.user;
   setStatus(isAdmin ? "Admin connected" : "Admin login required");
 }
 
 function renderAdminBetsTable(server, state) {
-  const players = state.users.filter((user) => user.role === "player" && user.is_active && (user.servers || []).includes(server));
+  const players = state.users.filter((user) => ["player", "ai_agent"].includes(user.role) && user.is_active && (user.servers || []).includes(server));
   if (players.length && !players.some((player) => String(player.id) === String(selectedBetPlayerId))) {
     selectedBetPlayerId = String(players[0].id);
     localStorage.setItem("selectedBetPlayerId", selectedBetPlayerId);
@@ -247,8 +253,13 @@ function renderAdmin() {
   const createRole = elements.createUserForm.querySelector('[name="role"]');
   const createServerChecks = [...elements.createUserForm.querySelectorAll('[name="serverAccess"]')];
   if (createRole) {
-    createRole.value = isFullAdmin() ? createRole.value : "player";
-    createRole.disabled = !isFullAdmin();
+    const allowedRoles = isFullAdmin() ? ["player", "ai_agent", "admin"] : ["player", "ai_agent"];
+    [...createRole.options].forEach((option) => {
+      option.hidden = !allowedRoles.includes(option.value);
+      option.disabled = !allowedRoles.includes(option.value);
+    });
+    if (!allowedRoles.includes(createRole.value)) createRole.value = "player";
+    createRole.disabled = false;
   }
   createServerChecks.forEach((checkbox) => {
     const allowed = isFullAdmin() || accessibleServers.includes(checkbox.value);
@@ -258,8 +269,8 @@ function renderAdmin() {
   elements.adminUsers.innerHTML = app.state.users.map((user) => `
     <div class="compact-item admin-user" data-id="${user.id}">
       <div class="admin-item-title">
-        <strong>${escapeHtml(user.display_name)}</strong>
-        <small>${escapeHtml(user.login_id)} / ${user.role === "admin" ? "Admin" : "Player"} / ${(user.servers || []).join(", ")}</small>
+        <strong>${escapeHtml(user.display_name)} ${user.role === "ai_agent" ? `<span class="admin-ai-badge">AI Agent</span>` : ""}</strong>
+        <small>${escapeHtml(user.login_id)} / ${accountRoleLabel(user.role)} / ${(user.servers || []).join(", ")}</small>
       </div>
       <input data-user-field="displayName" value="${escapeHtml(user.display_name)}" placeholder="Display name">
       <input data-user-field="loginId" value="${escapeHtml(user.login_id)}" placeholder="Login ID">
@@ -267,6 +278,7 @@ function renderAdmin() {
       <select data-user-field="role" ${isFullAdmin() ? "" : "disabled"}>
         <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
         <option value="player" ${user.role === "player" ? "selected" : ""}>Player</option>
+        <option value="ai_agent" ${user.role === "ai_agent" ? "selected" : ""}>AI Agent</option>
       </select>
       ${isFullAdmin() ? `
         <label class="admin-check"><input data-user-server="US" type="checkbox" ${(user.servers || []).includes("US") ? "checked" : ""}> US</label>
@@ -275,6 +287,14 @@ function renderAdmin() {
       <label class="admin-check"><input data-user-field="isActive" type="checkbox" ${user.is_active ? "checked" : ""}> Active</label>
       <button class="secondary-light-button" data-save-user="true" type="button">Save</button>
       ${isFullAdmin() ? `<button class="danger-button admin-delete-button" data-delete-user="true" type="button" ${user.id === app.user?.id ? "disabled title=\"You cannot delete your own admin account\"" : ""}>Delete</button>` : ""}
+      ${user.role === "ai_agent" ? `
+        <div class="admin-ai-fields">
+          <span class="admin-ai-badge">Dedicated AI agent role</span>
+          <input data-user-field="aiProvider" value="${escapeHtml(user.ai_provider || "")}" placeholder="AI provider">
+          <input data-user-field="aiModel" value="${escapeHtml(user.ai_model || "")}" placeholder="AI model">
+          <span>Predictions appear on the public AI page and use agent-only APIs.</span>
+        </div>
+      ` : ""}
     </div>
   `).join("");
   elements.adminMatches.innerHTML = app.state.fixtures.map((fixture) => `
@@ -399,7 +419,7 @@ elements.createUserForm.addEventListener("submit", async (event) => {
   try {
     const formData = new FormData(elements.createUserForm);
     const data = Object.fromEntries(formData);
-    data.role = isFullAdmin() ? data.role : "player";
+    data.role = isFullAdmin() || data.role === "ai_agent" ? data.role : "player";
     data.serverAccess = isFullAdmin() ? formData.getAll("serverAccess") : (app.user?.servers || ["US"]);
     const payload = await api("/api/admin/users", { method: "POST", body: JSON.stringify(data) });
     app.state = payload.state;
