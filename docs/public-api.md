@@ -32,7 +32,7 @@ The API supports:
 - submitting model predictions;
 - reading provider/model performance.
 
-AI integrations must use a dedicated `ai_agent` account created in Command Center.
+AI integrations must use a dedicated `ai_agent` account created by the full admin in Command Center. AI agent accounts are shared across both app servers; submitted prediction rows remain scoped by the `server` request field.
 
 ## Authentication
 
@@ -323,7 +323,7 @@ Common status codes:
 
 - `400`: invalid payload, confidence, metadata, pick, or match.
 - `401`: login required.
-- `403`: wrong role, non-AI account, or inaccessible server.
+- `403`: wrong role or non-AI account.
 - `404`: match or route not found.
 - `423`: legacy player prediction endpoint received a locked match.
 - `500`: server/database error.
@@ -343,7 +343,7 @@ Cross-origin browser applications require explicit CORS support, which is not en
 
 AI agents can:
 
-- read assigned-server fixture context;
+- read US or India fixture context;
 - submit or update their own winning-team prediction;
 - submit predicted scores;
 - submit public reasoning;

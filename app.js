@@ -23,6 +23,7 @@ let loginPanelOpen = false;
 let profilePanelOpen = false;
 let profileAvatarData = "";
 let selectedServer = localStorage.getItem("selectedServer") || "";
+let roadmapZoom = Number(localStorage.getItem("roadmapZoom") || 1);
 const refreshIntervalMs = 60 * 1000;
 
 const elements = {
@@ -80,6 +81,11 @@ const elements = {
   groupTables: document.querySelector("#groupTables"),
   roadmap: document.querySelector("#roadmap"),
   roadmapLabel: document.querySelector("#roadmapLabel"),
+  roadmapZoomIn: document.querySelector("#roadmapZoomIn"),
+  roadmapZoomOut: document.querySelector("#roadmapZoomOut"),
+  roadmapZoomReset: document.querySelector("#roadmapZoomReset"),
+  roadmapZoomLabel: document.querySelector("#roadmapZoomLabel"),
+  thirdPlaceTable: document.querySelector("#thirdPlaceTable"),
   updatesContent: document.querySelector("#updatesContent"),
   privacyContent: document.querySelector("#privacyContent"),
   helpContent: document.querySelector("#helpContent"),
@@ -354,6 +360,10 @@ function displayTeamName(team) {
   const loserMatch = String(team || "").match(/^Loser Match (\d+)$/i);
   if (loserMatch) return fixtureTeamByOutcome(loserMatch[1], "loser") || team;
   return team;
+}
+
+function isKnownCountryTeam(team) {
+  return Boolean(TEAM_FLAGS[displayTeamName(team)]);
 }
 
 function isFinalFixture(fixture) {
@@ -1157,8 +1167,158 @@ function groupStandings() {
   }));
 }
 
+function compareStandingRows(a, b) {
+  return b.points - a.points
+    || b.gd - a.gd
+    || b.gf - a.gf
+    || a.team.localeCompare(b.team);
+}
+
+function clinchedTopTwoByPoints(group, rows) {
+  const fixtures = app.state.fixtures.filter((fixture) => fixture.group === group);
+  const remainingByTeam = new Map(rows.map((row) => [row.team, 0]));
+  fixtures
+    .filter((fixture) => !hasScore(fixture) || !isFinalFixture(fixture))
+    .forEach((fixture) => {
+      remainingByTeam.set(fixture.team1, (remainingByTeam.get(fixture.team1) || 0) + 1);
+      remainingByTeam.set(fixture.team2, (remainingByTeam.get(fixture.team2) || 0) + 1);
+    });
+  const maxPoints = new Map(rows.map((row) => [row.team, row.points + ((remainingByTeam.get(row.team) || 0) * 3)]));
+  const clinched = new Set();
+  rows.forEach((row) => {
+    const teamsThatCanCatch = rows.filter((other) => other.team !== row.team && (maxPoints.get(other.team) || 0) >= row.points);
+    if (teamsThatCanCatch.length <= 1) clinched.add(row.team);
+  });
+  return clinched;
+}
+
+function qualificationProjection() {
+  const groups = groupStandings();
+  const qualifiedTeams = new Map();
+  const groupMap = new Map(groups.map((group) => [group.group, group.rows]));
+  const groupCompletion = new Map(groups.map(({ group }) => {
+    const fixtures = app.state.fixtures.filter((fixture) => fixture.group === group);
+    return [group, fixtures.length > 0 && fixtures.every((fixture) => hasScore(fixture) && isFinalFixture(fixture))];
+  }));
+  const allGroupsComplete = [...groupCompletion.values()].length > 0 && [...groupCompletion.values()].every(Boolean);
+  const thirdPlaceRows = [];
+  groups.forEach(({ group, rows }) => {
+    const clinchedTopTwo = clinchedTopTwoByPoints(group, rows);
+    rows.forEach((row, index) => {
+      row.group = group;
+      row.rank = index + 1;
+      row.groupComplete = Boolean(groupCompletion.get(group));
+      if (index < 2 && (row.groupComplete || clinchedTopTwo.has(row.team))) {
+        qualifiedTeams.set(row.team, { type: "auto", group, rank: index + 1, confirmed: true, clinched: !row.groupComplete });
+      }
+      if (index === 2) {
+        thirdPlaceRows.push({ ...row, group, rank: 3 });
+      }
+    });
+  });
+  const thirdRankings = thirdPlaceRows.sort(compareStandingRows).map((row, index) => ({
+    ...row,
+    thirdRank: index + 1,
+    qualified: allGroupsComplete && index < 8,
+    projected: index < 8,
+  }));
+  thirdRankings.slice(0, 8).forEach((row) => {
+    if (allGroupsComplete) {
+      qualifiedTeams.set(row.team, { type: "third", group: row.group, rank: 3, thirdRank: row.thirdRank, confirmed: true });
+    }
+  });
+  app.state.fixtures
+    .filter((fixture) => fixture.stage === "Round of 32")
+    .flatMap((fixture) => [displayTeamName(fixture.team1), displayTeamName(fixture.team2)])
+    .filter(isKnownCountryTeam)
+    .forEach((team) => {
+      if (!qualifiedTeams.has(team)) {
+        qualifiedTeams.set(team, { type: "knockout-fixture", confirmed: true });
+      }
+    });
+  return { groups, groupMap, groupCompletion, allGroupsComplete, qualifiedTeams, thirdRankings };
+}
+
+function resolveGroupSeed(seed, projection, assignedThirdGroups = new Set()) {
+  const value = String(seed || "");
+  const winner = value.match(/^Winner Group ([A-L])$/i);
+  if (winner) {
+    const group = winner[1].toUpperCase();
+    return projection.groupCompletion.get(group) ? projection.groupMap.get(group)?.[0]?.team || value : value;
+  }
+  const runnerUp = value.match(/^Runner-up Group ([A-L])$/i);
+  if (runnerUp) {
+    const group = runnerUp[1].toUpperCase();
+    return projection.groupCompletion.get(group) ? projection.groupMap.get(group)?.[1]?.team || value : value;
+  }
+  const bestThird = value.match(/^Best 3rd \(([^)]+)\)$/i);
+  if (bestThird) {
+    if (!projection.allGroupsComplete) return value;
+    const candidateGroups = bestThird[1].split("/").map((group) => group.trim().toUpperCase());
+    const candidate = projection.thirdRankings.find((row) =>
+      row.qualified && candidateGroups.includes(row.group) && !assignedThirdGroups.has(row.group)
+    );
+    if (candidate) {
+      assignedThirdGroups.add(candidate.group);
+      return candidate.team;
+    }
+  }
+  return value;
+}
+
+function resolvedKnockoutTeam(seed, fixturesById, projection, assignedThirdGroups) {
+  const matchRef = String(seed || "").match(/^(Winner|Loser) Match (\d+)$/i);
+  if (matchRef) {
+    const fixture = fixturesById.get(Number(matchRef[2]));
+    if (!fixture?.result) return seed;
+    const winner = resultLabel(fixture, fixture.result);
+    if (matchRef[1].toLowerCase() === "winner") return winner;
+    return fixture.result === "Team 1" ? displayTeamName(fixture.team2) : fixture.result === "Team 2" ? displayTeamName(fixture.team1) : seed;
+  }
+  return resolveGroupSeed(seed, projection, assignedThirdGroups);
+}
+
+function renderThirdPlaceProjection(projection) {
+  return `
+    <section class="third-place-projection">
+      <div class="bracket-round-title">
+        <h3>Best Third-Place Teams</h3>
+        <span>${projection.allGroupsComplete ? "Top 8 advance" : "Projected until all groups finish"}</span>
+      </div>
+      <div class="third-place-leaderboard">
+        ${projection.thirdRankings.map((row) => `
+          <div class="third-place-row ${row.qualified ? "is-qualified" : row.projected ? "is-projected" : ""}">
+            <strong>#${row.thirdRank}</strong>
+            <div>${teamBadge(row.team, { compact: true })}<small>Group ${escapeHtml(row.group)}</small></div>
+            <span>${row.played} played</span>
+            <span>${row.gd > 0 ? `+${row.gd}` : row.gd} GD</span>
+            <b>${row.points} pts</b>
+            <em>${row.qualified ? "Qualified" : row.projected ? "Projected" : "Pending"}</em>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderThirdPlaceTable() {
+  if (!elements.thirdPlaceTable) return;
+  const projection = qualificationProjection();
+  elements.thirdPlaceTable.innerHTML = renderThirdPlaceProjection(projection);
+}
+
+function setRoadmapZoom(value) {
+  roadmapZoom = Math.min(1.4, Math.max(0.55, Math.round(Number(value || 1) * 100) / 100));
+  localStorage.setItem("roadmapZoom", String(roadmapZoom));
+  elements.roadmap?.style.setProperty("--roadmap-zoom", roadmapZoom);
+  if (elements.roadmapZoomLabel) {
+    elements.roadmapZoomLabel.textContent = `${Math.round(roadmapZoom * 100)}%`;
+  }
+}
+
 function renderGroupTables() {
-  elements.groupTables.innerHTML = groupStandings().map(({ group, rows }) => `
+  const projection = qualificationProjection();
+  elements.groupTables.innerHTML = projection.groups.map(({ group, rows }) => `
     <article class="group-table-card">
       <h3>Group ${escapeHtml(group)}</h3>
       <table class="standings-table">
@@ -1169,7 +1329,7 @@ function renderGroupTables() {
         </thead>
         <tbody>
           ${rows.map((row, index) => `
-            <tr class="${index < 2 ? "qualifier-row" : ""}">
+            <tr class="${index === 0 ? "top-row" : ""} ${projection.qualifiedTeams.has(row.team) ? "qualified-row" : ""}">
               <td>${teamBadge(row.team, { compact: true })}</td>
               <td>${row.played}</td>
               <td>${row.won}</td>
@@ -1186,38 +1346,88 @@ function renderGroupTables() {
 }
 
 function renderRoadmap() {
-  const stageOrder = ["Round of 32", "Round of 16", "Quarterfinal", "Semifinal", "Third-Place Match", "Final"];
-  const knockout = stageOrder
-    .map((stage) => ({
-      stage,
-      fixtures: app.state.fixtures.filter((fixture) => fixture.stage === stage),
-    }))
-    .filter((round) => round.fixtures.length);
-  elements.roadmapLabel.textContent = `${knockout.reduce((total, round) => total + round.fixtures.length, 0)} knockout matches`;
-  elements.roadmap.innerHTML = knockout.map((round) => `
-    <section class="bracket-round">
-      <div class="bracket-round-title">
-        <h3>${escapeHtml(round.stage)}</h3>
-        <span>${round.fixtures.length} matches</span>
+  const projection = qualificationProjection();
+  const fixturesById = new Map(app.state.fixtures.map((fixture) => [fixture.id, fixture]));
+  const assignedThirdGroups = new Set();
+  const knockoutFixtures = app.state.fixtures.filter((fixture) => fixture.stage && fixture.stage !== "Group Stage");
+  const resolvedFixture = (fixture) => ({
+    ...fixture,
+    projectedTeam1: resolvedKnockoutTeam(fixture.team1, fixturesById, projection, assignedThirdGroups),
+    projectedTeam2: resolvedKnockoutTeam(fixture.team2, fixturesById, projection, assignedThirdGroups),
+  });
+  const rounds = {
+    left32: [74, 77, 73, 75, 83, 84, 81, 82].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    left16: [89, 90, 93, 94].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    leftQf: [97, 98].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    leftSf: [101].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    final: [104].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    third: [103].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    rightSf: [102].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    rightQf: [99, 100].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    right16: [91, 92, 95, 96].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    right32: [76, 78, 79, 80, 86, 88, 85, 87].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+  };
+  const bracketMatch = (fixture, options = {}) => `
+    <article class="bracket-match ${fixture.result ? "is-final" : ""} ${options.center ? "is-championship" : ""}">
+      <div class="match-card-meta"><span>${options.center ? escapeHtml(fixture.stage || "Final") : `#${fixture.id}`}</span><span>${dateLabel(fixture.date)}${fixture.kickoff ? ` · ${escapeHtml(fixture.kickoff)}` : ""}</span></div>
+      <div class="bracket-teams">
+        <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam1), { compact: true })}<strong>${fixture.team1Score ?? ""}</strong></div>
+        <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam2), { compact: true })}<strong>${fixture.team2Score ?? ""}</strong></div>
       </div>
-      <div class="bracket-match-list">
-        ${round.fixtures.map((fixture) => `
-          <article class="bracket-match ${fixture.result ? "is-final" : ""}">
-            <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
-            <div class="bracket-teams">
-              <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.team1), { compact: true })}<strong>${fixture.team1Score ?? ""}</strong></div>
-              <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.team2), { compact: true })}<strong>${fixture.team2Score ?? ""}</strong></div>
-            </div>
-            <div class="bracket-match-footer">
-              <span>${escapeHtml(fixture.kickoff || "")}</span>
-              <strong>${fixture.result ? `${escapeHtml(resultLabel(fixture, fixture.result))} advances` : hasScore(fixture) ? escapeHtml(fixture.status || "In progress") : "Pending"}</strong>
-            </div>
-            <div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div>
-          </article>
+      <div class="bracket-match-footer">
+        <span>${escapeHtml(fixture.kickoff || "")}</span>
+        <strong>${fixture.result ? `${escapeHtml(resultLabel(fixture, fixture.result))} advances` : hasScore(fixture) ? escapeHtml(fixture.status || "In progress") : "Pending"}</strong>
+      </div>
+      <div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div>
+    </article>
+  `;
+  const slotMaps = {
+    round32: [1, 3, 5, 7, 10, 12, 14, 16],
+    round16: [2, 6, 11, 15],
+    quarter: [4, 13],
+    semi: [8],
+    final: [7],
+    third: [10],
+  };
+  const bracketRound = (title, fixtures, side = "", slots = []) => `
+    <section class="bracket-round ${side}">
+      <div class="bracket-round-title">
+        <h3>${escapeHtml(title)}</h3>
+      </div>
+      <div class="bracket-match-list bracket-slot-list">
+        ${fixtures.map((fixture, index) => `
+          <div class="bracket-slot" style="--slot:${slots[index] || index + 1}">
+            ${bracketMatch(fixture)}
+          </div>
         `).join("")}
       </div>
     </section>
-  `).join("");
+  `;
+  elements.roadmapLabel.textContent = `${knockoutFixtures.length} knockout matches · ${projection.qualifiedTeams.size} confirmed qualifiers`;
+  elements.roadmap.innerHTML = `
+    <div class="roadmap-zoom-surface">
+      <section class="centered-bracket">
+        ${bracketRound("Round of 32", rounds.left32, "is-left", slotMaps.round32)}
+        ${bracketRound("Round of 16", rounds.left16, "is-left", slotMaps.round16)}
+        ${bracketRound("Quarterfinal", rounds.leftQf, "is-left", slotMaps.quarter)}
+        ${bracketRound("Semifinal", rounds.leftSf, "is-left", slotMaps.semi)}
+        <section class="bracket-round is-center">
+          <div class="bracket-round-title">
+            <h3>Final</h3>
+          </div>
+          <div class="bracket-match-list bracket-slot-list">
+            ${rounds.final.map((fixture) => `<div class="bracket-slot" style="--slot:${slotMaps.final[0]}">${bracketMatch(fixture, { center: true })}</div>`).join("")}
+            ${rounds.third.map((fixture) => `<div class="bracket-slot third-place-slot" style="--slot:${slotMaps.third[0]}">${bracketMatch(fixture)}</div>`).join("")}
+          </div>
+        </section>
+        ${bracketRound("Semifinal", rounds.rightSf, "is-right", slotMaps.semi)}
+        ${bracketRound("Quarterfinal", rounds.rightQf, "is-right", slotMaps.quarter)}
+        ${bracketRound("Round of 16", rounds.right16, "is-right", slotMaps.round16)}
+        ${bracketRound("Round of 32", rounds.right32, "is-right", slotMaps.round32)}
+      </section>
+    </div>
+  `;
+  setRoadmapZoom(roadmapZoom);
 }
 
 function renderUpdates() {
@@ -1366,6 +1576,7 @@ function renderAll() {
   renderPredictionTables();
   renderAllFixtures();
   renderGroupTables();
+  renderThirdPlaceTable();
   renderRoadmap();
   renderUpdates();
   renderPrivacy();
@@ -1429,9 +1640,50 @@ document.querySelectorAll(".nav-tab").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.view));
 });
 
-document.querySelectorAll("[data-jump-view]").forEach((button) => {
-  button.addEventListener("click", () => setView(button.dataset.jumpView));
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-jump-view]");
+  if (!button) return;
+  setView(button.dataset.jumpView);
 });
+
+let roadmapDragState = null;
+
+elements.roadmap.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || event.target.closest("button, a, input, select, textarea")) return;
+  roadmapDragState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    scrollLeft: elements.roadmap.scrollLeft,
+    scrollTop: elements.roadmap.scrollTop,
+  };
+  elements.roadmap.classList.add("is-dragging");
+  elements.roadmap.setPointerCapture(event.pointerId);
+});
+
+elements.roadmap.addEventListener("pointermove", (event) => {
+  if (!roadmapDragState || roadmapDragState.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  elements.roadmap.scrollLeft = roadmapDragState.scrollLeft - (event.clientX - roadmapDragState.startX);
+  elements.roadmap.scrollTop = roadmapDragState.scrollTop - (event.clientY - roadmapDragState.startY);
+});
+
+function endRoadmapDrag(event) {
+  if (!roadmapDragState || roadmapDragState.pointerId !== event.pointerId) return;
+  roadmapDragState = null;
+  elements.roadmap.classList.remove("is-dragging");
+  if (elements.roadmap.hasPointerCapture(event.pointerId)) {
+    elements.roadmap.releasePointerCapture(event.pointerId);
+  }
+}
+
+elements.roadmap.addEventListener("pointerup", endRoadmapDrag);
+elements.roadmap.addEventListener("pointercancel", endRoadmapDrag);
+elements.roadmap.addEventListener("pointerleave", endRoadmapDrag);
+elements.roadmapZoomIn?.addEventListener("click", () => setRoadmapZoom(roadmapZoom + 0.1));
+elements.roadmapZoomOut?.addEventListener("click", () => setRoadmapZoom(roadmapZoom - 0.1));
+elements.roadmapZoomReset?.addEventListener("click", () => setRoadmapZoom(1));
+setRoadmapZoom(roadmapZoom);
 
 elements.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();

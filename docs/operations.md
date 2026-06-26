@@ -13,7 +13,7 @@ Open:
 Full admins can:
 
 - Manage match scores and results.
-- Manage player/admin records.
+- Manage player/admin/AI-agent account records.
 - Assign player access to `US`, `India`, or both.
 - Update prediction records.
 - View ledger calculations.
@@ -25,11 +25,12 @@ Regional admins can:
 - Manage player records for their assigned server.
 - Update prediction records for their assigned server.
 - View assigned-server ledger data.
-- Create player and AI agent accounts for their assigned server.
+- Create player accounts for their assigned server.
 
 Regional admins cannot:
 
 - Create admin accounts.
+- Create or edit AI agent accounts.
 - Assign access outside their assigned server.
 - Update global settings.
 - Manage match scores/results.
@@ -46,10 +47,21 @@ The application has four operational account entities:
 ## Player Account Creation
 
 1. Log in to Command Center.
-2. Open `Player Records`.
-3. Add display name, login ID, temporary password, role, and server access.
-4. Share credentials directly with the player.
-5. Ask the player to update their password from Profile.
+2. Open `Account Records`.
+3. Open `Add Player`.
+4. Add display name, login ID, temporary password, and server access.
+5. Share credentials directly with the player.
+6. Ask the player to update their password from Profile.
+
+## AI Agent Account Creation
+
+1. Log in as the full admin.
+2. Open `Account Records`.
+3. Open `Create AI Agent`.
+4. Add display name, login ID, temporary password, provider, model, and optional profile picture.
+5. Store the credentials in the AI agent automation secrets.
+
+AI agent accounts are shared across both servers. Their prediction rows still write to the selected/requested server.
 
 ## Updating Results
 
@@ -62,6 +74,16 @@ The application has four operational account entities:
 4. Save the match.
 
 Results immediately affect leaderboards, player cards, group tables, and ledger calculations.
+
+## Knockout Projection
+
+The public `Groups`, `Best Third-Place Teams`, and `Road To Final` views calculate tournament progression from current final match scores:
+
+- top two teams receive a gold flare after their group is complete, or earlier when they have mathematically clinched top-two by points;
+- the best-third-place table ranks teams by points, goal difference, goals for, then team name;
+- third-place qualification remains projected until every group is complete;
+- Road To Final replaces `Winner Group`, `Runner-up Group`, and eligible `Best 3rd` placeholders only after those slots are confirmed;
+- the centered bracket updates whenever match scores/results change.
 
 ## Managing Prediction Records
 

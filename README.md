@@ -21,7 +21,7 @@ Administrators use the Command Center to manage users, match scores, prediction 
 - Public picks view showing player predictions by match.
 - Dedicated AI Prediction Arena with OpenAI, Claude, and Gemini provider cards, a match-by-agent prediction matrix, result-aware tags, score forecasts, reasoning, confidence, technical metadata, and accuracy.
 - Player profile cards with profile images, supported team/player, awards, ranking, and tournament predictions.
-- Tournament fixtures, group tables, and road-to-final views.
+- Tournament fixtures, live group tables, a separate best-third-place projection page, and centered road-to-final bracket.
 - Command Center for match results, player records, prediction records, settings, and ledger management.
 - Optional football-data.org score synchronization.
 - SQLite persistence with Railway volume support.
@@ -33,7 +33,7 @@ The app intentionally uses a compact static frontend with a single Node HTTP ser
 - `index.html`: public application shell.
 - `app.js`: public app state, rendering, profile updates, predictions, leaderboard behavior, and regional UI logic.
 - `admin.html`: Command Center shell.
-- `admin.js`: administrator workflows for results, player records, prediction records, ledger, and settings.
+- `admin.js`: administrator workflows for results, account records, prediction records, ledger, and settings.
 - `server.js`: HTTP server, API routes, sessions, SQLite access, scoring calculations, sync jobs, and static file serving.
 - `styles.css`: shared visual system, responsive layout, player cards, tables, badges, and document pages.
 - `data/fixtures.js`: seeded FIFA World Cup 2026 fixture data.
@@ -101,11 +101,21 @@ India rankings are ordered by Matchballs, then Boots, Glory, Orbs, Legends, Pres
 ## Roles
 
 - `Full Admin`: access to both servers, admin/player/AI-agent creation, server access assignment, settings, sync, official scores, predictions, and ledger.
-- `Regional Admin`: access to assigned server only, player and AI-agent creation for that server, assigned-server records, predictions, and ledger.
+- `Regional Admin`: access to assigned server only, player creation for that server, assigned-server player records, predictions, and ledger.
 - `Player`: profile management, match predictions, score forecasts, tournament predictions, and public leaderboard/profile participation.
-- `AI Agent`: dedicated machine account for GitHub Actions or scheduled workers. Can read agent context and submit predictions, predicted scores, reasoning, confidence, and technical metadata for assigned servers. Cannot edit official match results or admin data.
+- `AI Agent`: dedicated machine account for GitHub Actions or scheduled workers. Can read agent context and submit predictions, predicted scores, reasoning, confidence, and technical metadata for both servers. Cannot edit official match results or admin data.
 
 Full and regional administrators share the `admin` database role; their server access determines whether they are full or regional administrators. Players and AI agents use distinct `player` and `ai_agent` roles.
+
+## Tournament Progression
+
+Group tables and the Road To Final view are calculated from current final match scores:
+
+- first and second place receive the gold qualifier flare after their group is complete, or earlier when they have mathematically clinched top-two by points;
+- the Best Third-Place page ranks third-place teams by points, goal difference, goals for, then team-name ordering;
+- third-place teams are shown as projected until every group is complete;
+- knockout placeholders such as `Winner Group A`, `Runner-up Group B`, and `Best 3rd (...)` are replaced only when the underlying qualification slot is confirmed;
+- the Road To Final bracket starts from both sides and merges into the Final at the center.
 
 ## Documentation
 

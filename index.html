@@ -304,7 +304,10 @@
               <h3>All Match Fixtures</h3>
               <span id="allFixturesLabel"></span>
             </div>
-            <button class="secondary-light-button inline-view-button" data-jump-view="roadmap" type="button"><i data-lucide="git-merge"></i>View Road To Final</button>
+            <div class="inline-view-actions">
+              <button class="secondary-light-button inline-view-button" data-jump-view="roadmap" type="button"><i data-lucide="git-merge"></i>View Road To Final</button>
+              <button class="secondary-light-button inline-view-button" data-jump-view="thirdPlace" type="button"><i data-lucide="list-ordered"></i>Best Third-Place Teams</button>
+            </div>
             <div class="tournament-fixture-list" id="allFixtures"></div>
           </section>
         </section>
@@ -315,7 +318,10 @@
               <h3>Group Tables</h3>
               <span>Group-stage points update from final results</span>
             </div>
-            <button class="secondary-light-button inline-view-button" data-jump-view="roadmap" type="button"><i data-lucide="git-merge"></i>View Road To Final</button>
+            <div class="inline-view-actions">
+              <button class="secondary-light-button inline-view-button" data-jump-view="roadmap" type="button"><i data-lucide="git-merge"></i>View Road To Final</button>
+              <button class="secondary-light-button inline-view-button" data-jump-view="thirdPlace" type="button"><i data-lucide="list-ordered"></i>Best Third-Place Teams</button>
+            </div>
             <div class="group-table-grid" id="groupTables"></div>
           </section>
         </section>
@@ -326,7 +332,32 @@
               <h3>Road To The Final</h3>
               <span id="roadmapLabel"></span>
             </div>
+            <div class="roadmap-toolbar">
+              <div class="inline-view-actions">
+                <button class="secondary-light-button inline-view-button" data-jump-view="thirdPlace" type="button"><i data-lucide="list-ordered"></i>Best Third-Place Teams</button>
+              </div>
+              <div class="roadmap-zoom-controls" aria-label="Road to final zoom controls">
+                <button id="roadmapZoomOut" type="button" aria-label="Zoom out"><i data-lucide="minus"></i></button>
+                <span id="roadmapZoomLabel">100%</span>
+                <button id="roadmapZoomIn" type="button" aria-label="Zoom in"><i data-lucide="plus"></i></button>
+                <button id="roadmapZoomReset" type="button">Reset</button>
+              </div>
+            </div>
             <div class="roadmap" id="roadmap"></div>
+          </section>
+        </section>
+
+        <section class="view" id="thirdPlaceView">
+          <section class="panel tournament-panel">
+            <div class="panel-heading">
+              <h3>Best Third-Place Teams</h3>
+              <span>Projected top 8 third-place teams</span>
+            </div>
+            <div class="inline-view-actions">
+              <button class="secondary-light-button inline-view-button" data-jump-view="roadmap" type="button"><i data-lucide="git-merge"></i>View Road To Final</button>
+              <button class="secondary-light-button inline-view-button" data-jump-view="groups" type="button"><i data-lucide="table-2"></i>View Groups</button>
+            </div>
+            <div id="thirdPlaceTable"></div>
           </section>
         </section>
 

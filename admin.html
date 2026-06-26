@@ -68,13 +68,7 @@
 
         <section id="adminContent">
           <div class="command-toolbar">
-            <label>
-              Server
-              <select id="adminServerSwitch" class="server-switch" aria-label="Select server">
-                <option value="US">US</option>
-                <option value="India">India</option>
-              </select>
-            </label>
+            <div class="command-server-toggle" id="adminServerSwitch" role="group" aria-label="Select server"></div>
           </div>
           <nav class="command-nav" aria-label="Command Center sections">
             <button class="command-tab active" data-admin-view="scores" type="button"><i data-lucide="trophy"></i>Match Scores</button>
@@ -126,24 +120,9 @@
             <section class="panel">
               <div class="panel-heading">
                 <h3>Account Records</h3>
-                <span>Create and manage players, AI agents, and administrators</span>
+                <span>Select one account at a time to review and update records</span>
               </div>
-              <form id="createUserForm" class="form-grid">
-                <input name="displayName" placeholder="Display name" required>
-                <input name="loginId" placeholder="Login ID" required>
-                <input name="password" placeholder="Temporary password" required>
-                <select name="role">
-                  <option value="player">Player</option>
-                  <option value="ai_agent">AI Agent</option>
-                  <option value="admin">Admin</option>
-                </select>
-                <input name="aiProvider" placeholder="AI provider (OpenAI)">
-                <input name="aiModel" placeholder="AI model (gpt-5.5)">
-                <label class="admin-check"><input name="serverAccess" type="checkbox" value="US" checked> US</label>
-                <label class="admin-check"><input name="serverAccess" type="checkbox" value="India"> India</label>
-                <button class="primary-button" type="submit"><i data-lucide="user-plus"></i>Create user</button>
-              </form>
-              <div class="compact-list" id="adminUsers"></div>
+              <div class="account-records-shell" id="adminUsers"></div>
             </section>
           </section>
 

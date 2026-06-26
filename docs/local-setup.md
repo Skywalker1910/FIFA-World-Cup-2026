@@ -87,7 +87,7 @@ Login ID: usadmin
 Password: usadmin123
 ```
 
-Initial player accounts are also seeded from `server.js`. Use the Command Center to add, update, or delete players.
+Initial player accounts are also seeded from `server.js`. Use Command Center `Account Records` to add, update, or delete players and full-admin-managed AI agents.
 
 ## Local Database
 

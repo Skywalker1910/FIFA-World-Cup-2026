@@ -2,6 +2,8 @@ let app = { user: null, state: null, serverStates: {} };
 let loginDismissed = false;
 let selectedServer = localStorage.getItem("selectedServer") || "US";
 let selectedBetPlayerId = localStorage.getItem("selectedBetPlayerId") || "";
+let selectedAccountView = localStorage.getItem("selectedAccountView") || "players";
+let selectedAccountId = localStorage.getItem("selectedAccountId") || "";
 
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
@@ -13,7 +15,6 @@ const elements = {
   adminContent: document.querySelector("#adminContent"),
   commandTabs: [...document.querySelectorAll("[data-admin-view]")],
   adminPages: [...document.querySelectorAll("[data-admin-page]")],
-  createUserForm: document.querySelector("#createUserForm"),
   createMatchForm: document.querySelector("#createMatchForm"),
   settingsForm: document.querySelector("#settingsForm"),
   syncResultsButton: document.querySelector("#syncResultsButton"),
@@ -84,6 +85,27 @@ function setStatus(message) {
   elements.saveStatus.textContent = message;
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve("");
+      return;
+    }
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type)) {
+      reject(new Error("Profile picture must be a PNG, JPG, GIF, or WebP image"));
+      return;
+    }
+    if (file.size > 750_000) {
+      reject(new Error("Profile picture must be smaller than 750 KB"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read profile picture"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value || 0));
 }
@@ -100,6 +122,258 @@ function accountRoleLabel(role) {
   if (role === "admin") return "Admin";
   if (role === "ai_agent") return "AI Agent";
   return "Player";
+}
+
+function roleBadge(role) {
+  const className = role === "admin" ? "is-admin" : role === "ai_agent" ? "is-agent" : "is-player";
+  return `<span class="admin-role-badge ${className}">${accountRoleLabel(role)}</span>`;
+}
+
+function accountServers(user) {
+  return user.role === "ai_agent" ? ["US", "India"] : (user.servers || []);
+}
+
+function accessibleAccountUsers() {
+  return app.state?.users || [];
+}
+
+function accountMatchesSearch(user, query) {
+  const search = String(query || "").trim().toLowerCase();
+  if (!search) return true;
+  return [user.display_name, user.login_id, accountRoleLabel(user.role), ...(accountServers(user) || [])]
+    .join(" ")
+    .toLowerCase()
+    .includes(search);
+}
+
+function accountCard(user, options = {}) {
+  const active = String(user.id) === String(selectedAccountId);
+  return `
+    <button class="account-record-card ${active ? "active" : ""}" data-select-account="${user.id}" type="button">
+      <span>
+        <strong>${escapeHtml(user.display_name)}</strong>
+        <small>${escapeHtml(user.login_id)} · ${accountServers(user).join(", ") || "No server"}</small>
+      </span>
+      <span class="account-record-card-meta">
+        ${roleBadge(user.role)}
+        <em class="${user.is_active ? "is-active" : "is-inactive"}">${user.is_active ? "Active" : "Inactive"}</em>
+      </span>
+      ${options.detail ? `<p>${escapeHtml(options.detail)}</p>` : ""}
+    </button>
+  `;
+}
+
+function selectedAccount(users = accessibleAccountUsers()) {
+  return users.find((user) => String(user.id) === String(selectedAccountId));
+}
+
+function ensureSelectedAccount(users) {
+  if (!users.length) {
+    selectedAccountId = "";
+    localStorage.removeItem("selectedAccountId");
+    return null;
+  }
+  if (!users.some((user) => String(user.id) === String(selectedAccountId))) {
+    selectedAccountId = String(users[0].id);
+    localStorage.setItem("selectedAccountId", selectedAccountId);
+  }
+  return selectedAccount(users);
+}
+
+function accountServerChecks(user, options = {}) {
+  const disabled = options.disabled ? "disabled" : "";
+  const checkedServers = user ? accountServers(user) : (isFullAdmin() ? [selectedServer] : app.user?.servers || ["US"]);
+  return ["US", "India"].map((server) => {
+    const checked = checkedServers.includes(server) ? "checked" : "";
+    const serverDisabled = user?.role === "ai_agent" ? "disabled" : disabled;
+    return `<label class="admin-check"><input data-account-server="${server}" name="serverAccess" type="checkbox" value="${server}" ${checked} ${serverDisabled}> ${server}</label>`;
+  }).join("");
+}
+
+function renderAccountEditor(user) {
+  if (!user) {
+    return `<div class="empty-state">Select an account to edit its records.</div>`;
+  }
+  const canChangeRole = isFullAdmin();
+  const canDelete = isFullAdmin() && user.id !== app.user?.id;
+  const aiFields = user.role === "ai_agent" ? `
+    <div class="account-avatar-field is-wide">
+      <div class="account-avatar-preview">${user.avatar_data ? `<img src="${escapeHtml(user.avatar_data)}" alt="">` : "AI"}</div>
+      <label>
+        <span>AI profile picture</span>
+        <input data-account-avatar type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+      </label>
+    </div>
+    <div class="account-form-row is-wide">
+      <input data-account-field="aiProvider" value="${escapeHtml(user.ai_provider || "")}" placeholder="AI provider">
+      <input data-account-field="aiModel" value="${escapeHtml(user.ai_model || "")}" placeholder="AI model">
+    </div>
+    <p class="account-form-note">AI agent responses and predictions are shared across both US and India servers. Match prediction records remain server-scoped.</p>
+  ` : "";
+  return `
+    <section class="account-editor admin-user" data-id="${user.id}">
+      <div class="account-editor-heading">
+        <div>
+          <strong>${escapeHtml(user.display_name)}</strong>
+          <small>${escapeHtml(user.login_id)} · ${accountServers(user).join(", ")}</small>
+        </div>
+        <div>
+          ${roleBadge(user.role)}
+          <span class="admin-role-badge ${user.is_active ? "is-active" : "is-inactive"}">${user.is_active ? "Active" : "Inactive"}</span>
+        </div>
+      </div>
+      <div class="account-form-grid">
+        <input data-account-field="displayName" value="${escapeHtml(user.display_name)}" placeholder="Display name">
+        <input data-account-field="loginId" value="${escapeHtml(user.login_id)}" placeholder="Login ID">
+        <input data-account-field="password" type="password" placeholder="New password">
+        <select data-account-field="role" ${canChangeRole ? "" : "disabled"}>
+          <option value="player" ${user.role === "player" ? "selected" : ""}>Player</option>
+          <option value="ai_agent" ${user.role === "ai_agent" ? "selected" : ""}>AI Agent</option>
+          <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
+        </select>
+        <div class="account-server-field">
+          <span>Server access</span>
+          ${accountServerChecks(user, { disabled: !isFullAdmin() })}
+        </div>
+        <label class="account-toggle account-active-toggle">
+          <input data-account-field="isActive" type="checkbox" ${user.is_active ? "checked" : ""}>
+          <span></span>
+          <strong>Active account</strong>
+        </label>
+        ${aiFields}
+      </div>
+      <div class="account-editor-actions">
+        <button class="primary-button" data-save-account="true" type="button"><i data-lucide="save"></i>Save account</button>
+        ${canDelete ? `<button class="danger-button" data-delete-account="true" type="button"><i data-lucide="trash-2"></i>Delete account</button>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderCreateAccountForm(role) {
+  const isAiAgent = role === "ai_agent";
+  const title = isAiAgent ? "Create AI Agent" : "Add Player";
+  const submitLabel = isAiAgent ? "Create AI agent" : "Add player";
+  return `
+    <section class="account-create-card">
+      <div class="account-section-heading">
+        <div>
+          <strong>${title}</strong>
+          <small>${isAiAgent ? "Agent credentials are used by automated prediction workflows." : "Player credentials are shared manually by an admin."}</small>
+        </div>
+        ${roleBadge(role)}
+      </div>
+      <form class="form-grid account-create-form" data-create-account-form data-create-role="${role}">
+        <input name="displayName" placeholder="Display name" required>
+        <input name="loginId" placeholder="Login ID" required>
+        <input name="password" placeholder="Temporary password" required>
+        ${isAiAgent ? `
+          <div class="account-avatar-field is-wide">
+            <div class="account-avatar-preview">AI</div>
+            <label>
+              <span>AI profile picture</span>
+              <input name="avatar" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+            </label>
+          </div>
+          <input name="aiProvider" placeholder="AI provider (OpenAI)">
+          <input name="aiModel" placeholder="AI model (gpt-5.5)">
+          <p class="account-form-note">AI agents are created with access to both servers so their responses can be shown globally.</p>
+        ` : `
+          <div class="account-server-field">
+            <span>Server access</span>
+            ${accountServerChecks(null, { disabled: !isFullAdmin() })}
+          </div>
+        `}
+        <button class="primary-button" type="submit"><i data-lucide="user-plus"></i>${submitLabel}</button>
+      </form>
+    </section>
+  `;
+}
+
+function renderAccountRecords() {
+  const users = accessibleAccountUsers();
+  const activeServer = selectedServer;
+  const playerUsers = users.filter((user) => user.role === "player" && accountServers(user).includes(activeServer));
+  const editableUsers = users.filter((user) => isFullAdmin() || (user.role === "player" && accountServers(user).includes(activeServer)));
+  const aiUsers = users.filter((user) => user.role === "ai_agent");
+  const accountTabs = [
+    ["players", "Players"],
+    ["edit", "Edit Account"],
+    ["agents", "AI Agents"],
+    ["add-player", "Add Player"],
+    ...(isFullAdmin() ? [["create-agent", "Create AI Agent"]] : []),
+  ];
+  if (!accountTabs.some(([view]) => view === selectedAccountView)) {
+    selectedAccountView = "players";
+    localStorage.setItem("selectedAccountView", selectedAccountView);
+  }
+  const search = document.querySelector("[data-account-search]")?.value || "";
+  const searchableUsers = editableUsers.filter((user) => accountMatchesSearch(user, search));
+  if (["players", "edit", "agents"].includes(selectedAccountView)) {
+    ensureSelectedAccount(selectedAccountView === "agents" ? aiUsers : selectedAccountView === "players" ? playerUsers : editableUsers);
+  }
+  const body = (() => {
+    if (selectedAccountView === "players") {
+      return `
+        <div class="account-list-grid">
+          <div class="account-list-panel">
+            <div class="account-section-heading">
+              <div>
+                <strong>${escapeHtml(activeServer)} Players</strong>
+                <small>${playerUsers.length} player accounts assigned to this server</small>
+              </div>
+              <span class="server-section-kicker">${escapeHtml(activeServer)}</span>
+            </div>
+            ${playerUsers.length ? playerUsers.map((user) => accountCard(user)).join("") : `<div class="empty-state">No players assigned to ${escapeHtml(activeServer)}.</div>`}
+          </div>
+          ${renderAccountEditor(selectedAccount(playerUsers))}
+        </div>
+      `;
+    }
+    if (selectedAccountView === "edit") {
+      return `
+        <div class="account-list-grid">
+          <div class="account-list-panel">
+            <div class="account-section-heading">
+              <div>
+                <strong>Search Accounts</strong>
+                <small>Select one account, then update the fields on the right.</small>
+              </div>
+              <input data-account-search value="${escapeHtml(search)}" placeholder="Search name, login, role, server">
+            </div>
+            ${searchableUsers.length ? searchableUsers.map((user) => accountCard(user)).join("") : `<div class="empty-state">No matching accounts.</div>`}
+          </div>
+          ${renderAccountEditor(selectedAccount(searchableUsers) || selectedAccount(editableUsers))}
+        </div>
+      `;
+    }
+    if (selectedAccountView === "agents") {
+      return `
+        <div class="account-list-grid">
+          <div class="account-list-panel">
+            <div class="account-section-heading">
+              <div>
+                <strong>AI Agents</strong>
+                <small>${aiUsers.filter((user) => user.is_active).length} active · ${aiUsers.filter((user) => !user.is_active).length} inactive</small>
+              </div>
+              ${roleBadge("ai_agent")}
+            </div>
+            ${aiUsers.length ? aiUsers.map((user) => accountCard(user, { detail: `${user.ai_provider || "AI"} ${user.ai_model || ""}`.trim() })).join("") : `<div class="empty-state">No AI agents created yet.</div>`}
+          </div>
+          ${isFullAdmin() ? renderAccountEditor(selectedAccount(aiUsers)) : `<div class="empty-state">AI agents are globally managed by the main admin.</div>`}
+        </div>
+      `;
+    }
+    if (selectedAccountView === "add-player") return renderCreateAccountForm("player");
+    if (selectedAccountView === "create-agent") return renderCreateAccountForm("ai_agent");
+    return "";
+  })();
+  return `
+    <div class="account-record-tabs">
+      ${accountTabs.map(([view, label]) => `<button class="${view === selectedAccountView ? "active" : ""}" data-account-view="${view}" type="button">${escapeHtml(label)}</button>`).join("")}
+    </div>
+    ${body}
+  `;
 }
 
 function scoreValue(value) {
@@ -245,58 +519,12 @@ function renderAdmin() {
   const betServerList = accessibleServers.map((server) => `<span>${escapeHtml(server)}</span>`).join("");
   const activeBetServer = accessibleServers.includes(selectedServer) ? selectedServer : accessibleServers[0];
   const activeBetState = app.serverStates[activeBetServer] || app.state;
-  elements.adminServerSwitch.innerHTML = accessibleServers.map((server) => `<option value="${escapeHtml(server)}">${escapeHtml(server)}</option>`).join("");
-  elements.adminServerSwitch.value = app.state.settings.server;
+  elements.adminServerSwitch.innerHTML = accessibleServers.map((server) => `
+    <button class="${server === selectedServer ? "active" : ""}" data-admin-server-option="${escapeHtml(server)}" type="button">${escapeHtml(server)}</button>
+  `).join("");
   elements.settingsForm.stake.value = app.state.settings.stake;
   elements.settingsForm.lockMinutes.value = app.state.settings.lockMinutes;
-  elements.createUserForm.hidden = false;
-  const createRole = elements.createUserForm.querySelector('[name="role"]');
-  const createServerChecks = [...elements.createUserForm.querySelectorAll('[name="serverAccess"]')];
-  if (createRole) {
-    const allowedRoles = isFullAdmin() ? ["player", "ai_agent", "admin"] : ["player", "ai_agent"];
-    [...createRole.options].forEach((option) => {
-      option.hidden = !allowedRoles.includes(option.value);
-      option.disabled = !allowedRoles.includes(option.value);
-    });
-    if (!allowedRoles.includes(createRole.value)) createRole.value = "player";
-    createRole.disabled = false;
-  }
-  createServerChecks.forEach((checkbox) => {
-    const allowed = isFullAdmin() || accessibleServers.includes(checkbox.value);
-    checkbox.checked = isFullAdmin() ? checkbox.checked : accessibleServers.includes(checkbox.value);
-    checkbox.disabled = !allowed || !isFullAdmin();
-  });
-  elements.adminUsers.innerHTML = app.state.users.map((user) => `
-    <div class="compact-item admin-user" data-id="${user.id}">
-      <div class="admin-item-title">
-        <strong>${escapeHtml(user.display_name)} ${user.role === "ai_agent" ? `<span class="admin-ai-badge">AI Agent</span>` : ""}</strong>
-        <small>${escapeHtml(user.login_id)} / ${accountRoleLabel(user.role)} / ${(user.servers || []).join(", ")}</small>
-      </div>
-      <input data-user-field="displayName" value="${escapeHtml(user.display_name)}" placeholder="Display name">
-      <input data-user-field="loginId" value="${escapeHtml(user.login_id)}" placeholder="Login ID">
-      <input data-user-field="password" type="password" placeholder="New password">
-      <select data-user-field="role" ${isFullAdmin() ? "" : "disabled"}>
-        <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
-        <option value="player" ${user.role === "player" ? "selected" : ""}>Player</option>
-        <option value="ai_agent" ${user.role === "ai_agent" ? "selected" : ""}>AI Agent</option>
-      </select>
-      ${isFullAdmin() ? `
-        <label class="admin-check"><input data-user-server="US" type="checkbox" ${(user.servers || []).includes("US") ? "checked" : ""}> US</label>
-        <label class="admin-check"><input data-user-server="India" type="checkbox" ${(user.servers || []).includes("India") ? "checked" : ""}> India</label>
-      ` : `<span class="admin-check">${(user.servers || []).join(", ")}</span>`}
-      <label class="admin-check"><input data-user-field="isActive" type="checkbox" ${user.is_active ? "checked" : ""}> Active</label>
-      <button class="secondary-light-button" data-save-user="true" type="button">Save</button>
-      ${isFullAdmin() ? `<button class="danger-button admin-delete-button" data-delete-user="true" type="button" ${user.id === app.user?.id ? "disabled title=\"You cannot delete your own admin account\"" : ""}>Delete</button>` : ""}
-      ${user.role === "ai_agent" ? `
-        <div class="admin-ai-fields">
-          <span class="admin-ai-badge">Dedicated AI agent role</span>
-          <input data-user-field="aiProvider" value="${escapeHtml(user.ai_provider || "")}" placeholder="AI provider">
-          <input data-user-field="aiModel" value="${escapeHtml(user.ai_model || "")}" placeholder="AI model">
-          <span>Predictions appear on the public AI page and use agent-only APIs.</span>
-        </div>
-      ` : ""}
-    </div>
-  `).join("");
+  elements.adminUsers.innerHTML = renderAccountRecords();
   elements.adminMatches.innerHTML = app.state.fixtures.map((fixture) => `
     <div class="admin-match" data-id="${fixture.id}">
       <div class="admin-match-summary">
@@ -398,10 +626,14 @@ elements.commandTabs.forEach((tab) => {
   tab.addEventListener("click", () => setAdminView(tab.dataset.adminView));
 });
 
-elements.adminServerSwitch.addEventListener("change", async () => {
-  selectedServer = elements.adminServerSwitch.value;
+elements.adminServerSwitch.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-admin-server-option]");
+  if (!button) return;
+  selectedServer = button.dataset.adminServerOption;
   selectedBetPlayerId = "";
+  selectedAccountId = "";
   localStorage.removeItem("selectedBetPlayerId");
+  localStorage.removeItem("selectedAccountId");
   localStorage.setItem("selectedServer", selectedServer);
   await refresh();
 });
@@ -412,23 +644,6 @@ elements.adminBets.addEventListener("change", (event) => {
   selectedBetPlayerId = select.value;
   localStorage.setItem("selectedBetPlayerId", selectedBetPlayerId);
   renderAll();
-});
-
-elements.createUserForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const formData = new FormData(elements.createUserForm);
-    const data = Object.fromEntries(formData);
-    data.role = isFullAdmin() || data.role === "ai_agent" ? data.role : "player";
-    data.serverAccess = isFullAdmin() ? formData.getAll("serverAccess") : (app.user?.servers || ["US"]);
-    const payload = await api("/api/admin/users", { method: "POST", body: JSON.stringify(data) });
-    app.state = payload.state;
-    elements.createUserForm.reset();
-    setStatus("User created");
-    renderAll();
-  } catch (error) {
-    setStatus(error.message);
-  }
 });
 
 elements.createMatchForm.addEventListener("submit", async (event) => {
@@ -467,15 +682,78 @@ elements.adminMatches.addEventListener("click", async (event) => {
   }
 });
 
+elements.adminUsers.addEventListener("change", (event) => {
+  if (event.target.closest("[data-account-search]")) {
+    renderAll();
+    return;
+  }
+  const avatarInput = event.target.closest("[data-account-avatar], [name='avatar']");
+  if (!avatarInput) return;
+  const preview = avatarInput.closest(".account-avatar-field")?.querySelector(".account-avatar-preview");
+  const file = avatarInput.files?.[0];
+  if (!preview || !file) return;
+  fileToDataUrl(file)
+    .then((dataUrl) => {
+      preview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="">`;
+    })
+    .catch((error) => {
+      avatarInput.value = "";
+      setStatus(error.message);
+    });
+});
+
+elements.adminUsers.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-create-account-form]");
+  if (!form) return;
+  event.preventDefault();
+  try {
+    const formData = new FormData(form);
+    const role = form.dataset.createRole === "ai_agent" && isFullAdmin() ? "ai_agent" : "player";
+    const data = Object.fromEntries(formData);
+    data.role = role;
+    data.avatarData = role === "ai_agent" ? await fileToDataUrl(form.querySelector("[name='avatar']")?.files?.[0]) : "";
+    data.serverAccess = role === "ai_agent"
+      ? ["US", "India"]
+      : isFullAdmin()
+        ? formData.getAll("serverAccess")
+        : (app.user?.servers || ["US"]);
+    const payload = await api("/api/admin/users", { method: "POST", body: JSON.stringify(data) });
+    app.state = payload.state;
+    form.reset();
+    setStatus(role === "ai_agent" ? "AI agent created" : "Player created");
+    renderAll();
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
+
 elements.adminUsers.addEventListener("click", async (event) => {
-  const deleteButton = event.target.closest("[data-delete-user]");
+  const viewButton = event.target.closest("[data-account-view]");
+  if (viewButton) {
+    selectedAccountView = viewButton.dataset.accountView;
+    localStorage.setItem("selectedAccountView", selectedAccountView);
+    renderAll();
+    return;
+  }
+
+  const selectAccountButton = event.target.closest("[data-select-account]");
+  if (selectAccountButton) {
+    selectedAccountId = selectAccountButton.dataset.selectAccount;
+    localStorage.setItem("selectedAccountId", selectedAccountId);
+    renderAll();
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-account]");
   if (deleteButton) {
     const row = deleteButton.closest(".admin-user");
-    const userName = row.querySelector(".admin-item-title strong")?.textContent || "this user";
+    const userName = row.querySelector(".account-editor-heading strong")?.textContent || "this account";
     if (!window.confirm(`Delete ${userName}? This removes their account, sessions, and prediction records.`)) return;
     try {
       const payload = await api(`/api/admin/users/${row.dataset.id}/delete`, { method: "POST", body: "{}" });
       app.state = payload.state;
+      selectedAccountId = "";
+      localStorage.removeItem("selectedAccountId");
       setStatus("User deleted");
       renderAll();
     } catch (error) {
@@ -484,18 +762,22 @@ elements.adminUsers.addEventListener("click", async (event) => {
     return;
   }
 
-  const button = event.target.closest("[data-save-user]");
+  const button = event.target.closest("[data-save-account]");
   if (!button) return;
   const row = button.closest(".admin-user");
   try {
     const values = {};
-    row.querySelectorAll("[data-user-field]").forEach((input) => {
-      values[input.dataset.userField] = input.type === "checkbox" ? input.checked : input.value;
+    row.querySelectorAll("[data-account-field]").forEach((input) => {
+      values[input.dataset.accountField] = input.type === "checkbox" ? input.checked : input.value;
     });
-    values.serverAccess = [...row.querySelectorAll("[data-user-server]:checked")].map((input) => input.dataset.userServer);
+    values.serverAccess = values.role === "ai_agent"
+      ? ["US", "India"]
+      : [...row.querySelectorAll("[data-account-server]:checked")].map((input) => input.dataset.accountServer);
+    const avatarData = await fileToDataUrl(row.querySelector("[data-account-avatar]")?.files?.[0]);
+    if (avatarData) values.avatarData = avatarData;
     const payload = await api(`/api/admin/users/${row.dataset.id}`, { method: "PATCH", body: JSON.stringify(values) });
     app.state = payload.state;
-    setStatus("User saved");
+    setStatus("Account saved");
     renderAll();
   } catch (error) {
     setStatus(error.message);

@@ -128,7 +128,7 @@ function preferredServerFromCountry(country) {
 }
 
 function parseServerAccess(value, role = "player") {
-  const fallback = role === "admin" ? "US,India" : "US";
+  const fallback = ["admin", "ai_agent"].includes(role) ? "US,India" : "US";
   const access = String(value || fallback)
     .split(",")
     .map((item) => normalizeServer(item.trim()))
@@ -137,6 +137,7 @@ function parseServerAccess(value, role = "player") {
 }
 
 function serverAccessValue(value, role = "player") {
+  if (role === "ai_agent") return servers.join(",");
   const requested = Array.isArray(value) ? value.join(",") : value;
   return parseServerAccess(requested, role).join(",");
 }
@@ -487,6 +488,7 @@ async function initDb() {
   await runSql(`
     UPDATE users SET server_access = 'US,India' WHERE role = 'admin' AND (server_access IS NULL OR server_access = '');
     UPDATE users SET server_access = 'US' WHERE role IN ('player','ai_agent') AND (server_access IS NULL OR server_access = '');
+    UPDATE users SET server_access = 'US,India' WHERE role = 'ai_agent';
     UPDATE users SET is_ai_agent = 1 WHERE role = 'ai_agent';
     UPDATE users SET is_ai_agent = 0, ai_provider = NULL, ai_model = NULL WHERE role != 'ai_agent';
   `);
@@ -917,7 +919,6 @@ async function aiPredictionsState(selectedServer = "US") {
   ]);
 
   const agents = userRows
-    .filter((row) => parseServerAccess(row.server_access, "player").includes(server))
     .map((row) => {
       const predictions = predictionRows.filter((prediction) => prediction.user_id === row.id);
       const settled = predictions.filter((prediction) => prediction.result);
@@ -1582,20 +1583,27 @@ async function router(request, response) {
     }
     const fullAdmin = isFullAdmin(admin);
     const requestedRole = ["admin", "player", "ai_agent"].includes(body.role) ? body.role : "player";
-    const role = fullAdmin ? requestedRole : requestedRole === "ai_agent" ? "ai_agent" : "player";
+    const role = fullAdmin ? requestedRole : "player";
     const serverAccess = fullAdmin
       ? serverAccessValue(body.serverAccess, role)
       : parseServerAccess(admin.server_access, admin.role).join(",");
-    if (!fullAdmin && !["player", "ai_agent"].includes(role)) {
-      sendJson(response, 403, { ok: false, error: "Regional admins can only create player or AI agent accounts" });
+    if (!fullAdmin && requestedRole !== "player") {
+      sendJson(response, 403, { ok: false, error: "Regional admins can only create player accounts" });
       return;
     }
     const isAiAgent = role === "ai_agent";
     const aiProvider = isAiAgent ? String(body.aiProvider || "OpenAI").trim().slice(0, 80) : null;
     const aiModel = isAiAgent ? String(body.aiModel || "").trim().slice(0, 120) : null;
+    let avatarData = "";
+    try {
+      avatarData = isAiAgent ? cleanAvatarData(body.avatarData) : "";
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: error.message });
+      return;
+    }
     await runSql(`
-      INSERT INTO users(login_id, display_name, password_hash, role, server_access, is_ai_agent, ai_provider, ai_model, is_active)
-      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(role)}, ${sqlValue(serverAccess)}, ${sqlValue(isAiAgent ? 1 : 0)}, ${sqlValue(aiProvider)}, ${sqlValue(aiModel)}, 1);
+      INSERT INTO users(login_id, display_name, password_hash, role, server_access, avatar_data, is_ai_agent, ai_provider, ai_model, is_active)
+      VALUES (${sqlValue(body.loginId)}, ${sqlValue(body.displayName)}, ${sqlValue(hashPassword(body.password))}, ${sqlValue(role)}, ${sqlValue(serverAccess)}, ${sqlValue(avatarData)}, ${sqlValue(isAiAgent ? 1 : 0)}, ${sqlValue(aiProvider)}, ${sqlValue(aiModel)}, 1);
     `);
     sendJson(response, 200, { ok: true, state: await appState(admin, requestServer(url, admin)) });
     return;
@@ -1615,14 +1623,23 @@ async function router(request, response) {
     if (!isFullAdmin(admin)) {
       const adminServers = parseServerAccess(admin.server_access, admin.role);
       const targetServers = parseServerAccess(targetUser.server_access, targetUser.role);
-      if (!["player", "ai_agent"].includes(targetUser.role) || !targetServers.some((server) => adminServers.includes(server))) {
-        sendJson(response, 403, { ok: false, error: "You can only update player or AI agent records in your assigned server" });
+      if (targetUser.role !== "player" || !targetServers.some((server) => adminServers.includes(server))) {
+        sendJson(response, 403, { ok: false, error: "You can only update player records in your assigned server" });
         return;
       }
       delete body.role;
       delete body.serverAccess;
     }
     const nextRole = body.role || targetUser.role;
+    let avatarSql = "";
+    if (body.avatarData !== undefined) {
+      try {
+        avatarSql = `avatar_data = ${sqlValue(cleanAvatarData(body.avatarData))},`;
+      } catch (error) {
+        sendJson(response, 400, { ok: false, error: error.message });
+        return;
+      }
+    }
     const aiAccountSql = nextRole === "ai_agent"
       ? `is_ai_agent = 1,
           ai_provider = COALESCE(${body.aiProvider === undefined ? "NULL" : sqlValue(String(body.aiProvider || "").trim().slice(0, 80))}, ai_provider),
@@ -1635,6 +1652,7 @@ async function router(request, response) {
           display_name = COALESCE(${sqlValue(body.displayName)}, display_name),
           role = COALESCE(${body.role === "admin" ? "'admin'" : body.role === "player" ? "'player'" : body.role === "ai_agent" ? "'ai_agent'" : "NULL"}, role),
           server_access = COALESCE(${body.serverAccess === undefined ? "NULL" : sqlValue(serverAccessValue(body.serverAccess, body.role))}, server_access),
+          ${avatarSql}
           ${aiAccountSql}
           is_active = COALESCE(${body.isActive === undefined ? "NULL" : sqlValue(body.isActive ? 1 : 0)}, is_active)
           ${passwordSql}
