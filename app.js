@@ -885,6 +885,7 @@ const AI_PROVIDER_CARDS = [
   { key: "openai", name: "OpenAI", agentLabel: "GPT Agent", icon: "sparkles", className: "provider-openai" },
   { key: "anthropic", name: "Anthropic", agentLabel: "Claude Agent", icon: "brain-circuit", className: "provider-claude" },
   { key: "google", name: "Google", agentLabel: "Gemini Agent", icon: "gem", className: "provider-gemini" },
+  { key: "other", name: "AI Provider", agentLabel: "AI Agent", icon: "bot", className: "provider-other" },
 ];
 
 function aiProviderKey(value) {
@@ -906,6 +907,16 @@ function aiMetadataEntries(metadata) {
         : String(value);
     return [label, displayValue];
   });
+}
+
+function aiProviderProfile(value) {
+  return AI_PROVIDER_CARDS.find((provider) => provider.key === aiProviderKey(value)) || AI_PROVIDER_CARDS.at(-1);
+}
+
+function aiStatusLabel(status) {
+  if (status === "connected") return "Connected";
+  if (status === "stopped") return "Stopped";
+  return "Awaiting agent";
 }
 
 function aiPredictionAsBet(prediction) {
@@ -991,13 +1002,13 @@ function renderAIPredictionMatrix(agents, predictions) {
 
 function renderAI() {
   if (!elements.aiAgentCards || !elements.aiPredictionsList) return;
-  const aiState = app.aiState || { agents: [], predictions: [], providers: [], server: activeServer() };
+  const aiState = app.aiState || { agents: [], predictions: [], providers: [], scope: "global" };
   const agents = aiState.agents || [];
   const predictions = aiState.predictions || [];
   const confidenceValues = predictions
     .map((prediction) => Number(prediction.confidence))
     .filter((confidence) => Number.isFinite(confidence));
-  elements.aiServerLabel.textContent = `${aiState.server || activeServer()} Server`;
+  elements.aiServerLabel.textContent = "Global AI Feed";
   elements.aiPredictionsLabel.textContent = `${predictions.length} predictions from ${agents.length} AI agent${agents.length === 1 ? "" : "s"}`;
   elements.aiActiveAgents.textContent = agents.length;
   elements.aiTotalPredictions.textContent = predictions.length;
@@ -1006,30 +1017,35 @@ function renderAI() {
     : "—";
   renderAIPredictionMatrix(agents, predictions);
 
-  elements.aiAgentCards.innerHTML = AI_PROVIDER_CARDS.map((provider) => {
-    const providerAgents = agents.filter((agent) => aiProviderKey(agent.provider || agent.model) === provider.key);
-    const agent = providerAgents[0] || null;
-    const providerPredictions = predictions.filter((prediction) => aiProviderKey(prediction.provider || prediction.model) === provider.key);
-    const providerConfidence = providerPredictions
-      .map((prediction) => Number(prediction.confidence))
-      .filter((confidence) => Number.isFinite(confidence));
+  elements.aiAgentCards.innerHTML = agents.length ? agents.map((agent) => {
+    const provider = aiProviderProfile(agent.provider || agent.model);
+    const correct = agent?.correct || 0;
+    const accuracy = agent?.settled ? `${Math.round((agent.accuracy || 0) * 100)}%` : "—";
+    const status = ["connected", "stopped"].includes(agent.status) ? agent.status : "awaiting";
+    const agentAvatar = agent.avatarData
+      ? avatarHtml({ display_name: agent.displayName, avatar_data: agent.avatarData }, "avatar ai-agent-profile-avatar")
+      : `<span class="avatar ai-agent-profile-avatar ai-agent-provider-avatar"><i data-lucide="${provider.icon}"></i></span>`;
     return `
-    <article class="ai-agent-card ${provider.className} ${agent ? "is-connected" : "is-awaiting"}">
+    <article class="ai-agent-card ${provider.className} is-${status}">
       <div class="ai-agent-card-head">
-        <span class="ai-provider-mark"><i data-lucide="${provider.icon}"></i></span>
-        <span class="ai-agent-live"><span></span>${agent ? "Connected" : "Awaiting agent"}</span>
+        <span class="ai-provider-name">${escapeHtml(agent.provider || provider.name)}</span>
+        <span class="ai-agent-live"><span></span>${aiStatusLabel(status)}</span>
       </div>
-      <span class="ai-provider-name">${provider.name}</span>
-      <h4>${escapeHtml(agent?.displayName || provider.agentLabel)}</h4>
-      <p>${escapeHtml(agent?.model || "Create and assign a dedicated AI agent account in Command Center")}</p>
-      <div class="ai-agent-stats">
+      <div class="ai-agent-hero-panel">
+        ${agentAvatar}
+      </div>
+      <div class="ai-agent-identity">
+        <h4>${escapeHtml(agent.displayName || provider.agentLabel)}</h4>
+        <p title="${escapeHtml(agent.statusMessage || "")}">${escapeHtml(agent.model || agent.statusMessage || "Model not assigned")}</p>
+      </div>
+      <div class="ai-agent-stats player-card-stat-row">
         <div><strong>${agent?.predictionsEntered || 0}</strong><span>Predictions</span></div>
-        <div><strong>${agent?.correct || 0}</strong><span>Correct</span></div>
-        <div><strong>${providerConfidence.length ? `${Math.round(providerConfidence.reduce((sum, value) => sum + value, 0) / providerConfidence.length)}%` : "—"}</strong><span>Confidence</span></div>
+        <div><strong>${correct}</strong><span>Correct</span></div>
+        <div><strong>${accuracy}</strong><span>Accuracy</span></div>
       </div>
     </article>
   `;
-  }).join("");
+  }).join("") : `<div class="empty-state ai-agent-empty">No AI agent accounts have been created yet.</div>`;
 
   elements.aiPredictionsList.innerHTML = predictions.length ? predictions.map((prediction) => {
     const fixture = { id: prediction.matchId, ...prediction.match };
@@ -1083,7 +1099,7 @@ function renderAI() {
         </div>
       </article>
     `;
-  }).join("") : `<div class="empty-state">AI agents have not submitted predictions for this server yet.</div>`;
+  }).join("") : `<div class="empty-state">AI agents have not submitted shared predictions yet.</div>`;
 }
 
 function renderAllFixtures() {
@@ -1589,7 +1605,7 @@ async function refresh() {
   const [me, state, aiState] = await Promise.all([
     api("/api/me"),
     api(`/api/state?server=${encodeURIComponent(selectedServer)}`),
-    api(`/api/ai/predictions?server=${encodeURIComponent(selectedServer)}`),
+    api("/api/ai/predictions"),
   ]);
   app.user = me.user;
   app.aiState = aiState;
@@ -1598,7 +1614,7 @@ async function refresh() {
     localStorage.setItem("selectedServer", selectedServer);
     [app.state, app.aiState] = await Promise.all([
       api(`/api/state?server=${encodeURIComponent(selectedServer)}`),
-      api(`/api/ai/predictions?server=${encodeURIComponent(selectedServer)}`),
+      api("/api/ai/predictions"),
     ]);
     renderAll();
     return;

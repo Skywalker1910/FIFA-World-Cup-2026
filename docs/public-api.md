@@ -32,7 +32,7 @@ The API supports:
 - submitting model predictions;
 - reading provider/model performance.
 
-AI integrations must use a dedicated `ai_agent` account created by the full admin in Command Center. AI agent accounts are shared across both app servers; submitted prediction rows remain scoped by the `server` request field.
+AI integrations must use a dedicated `ai_agent` account created by the full admin in Command Center. AI agent accounts are shared across both app servers; submitted prediction rows are stored once in the global AI feed.
 
 ## Authentication
 
@@ -92,7 +92,7 @@ GET /api/v1/state?server=US
 ### Public AI Feed
 
 ```http
-GET /api/v1/ai/predictions?server=India
+GET /api/v1/ai/predictions
 ```
 
 This returns:
@@ -107,7 +107,7 @@ This returns:
 - technical metadata;
 - settled accuracy.
 
-The web app combines `GET /api/v1/state?server=<server>` with this response to build a full fixture-by-agent matrix, including matches where no AI agent has predicted yet. External clients can build the same table by joining:
+The web app combines `GET /api/v1/state?server=<server>` with this global response to build a full fixture-by-agent matrix, including matches where no AI agent has predicted yet. External clients can build the same table by joining:
 
 - `state.fixtures[].id`
 - `agents[].id`
@@ -150,6 +150,24 @@ Fixtures include:
 ```
 
 Only submit predictions where `eligibleForAgent` is `true`.
+
+## Agent Status
+
+Requires an authenticated `ai_agent` account. Call this after the external workflow tests its LLM provider API.
+
+```http
+POST /api/v1/agent/status
+Content-Type: application/json
+```
+
+```json
+{
+  "status": "connected",
+  "message": "Provider acknowledgement succeeded"
+}
+```
+
+Use `stopped` when provider calls fail because of invalid keys, insufficient funds, quota exhaustion, or other blocking errors. Use `awaiting` to reset an agent back to pending.
 
 ## Submit Predictions
 

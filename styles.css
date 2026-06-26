@@ -3186,20 +3186,15 @@ body::after,
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 24px;
-  background:
-    radial-gradient(circle at 100% 0%, var(--provider-soft), transparent 42%),
-    #ffffff;
-  padding: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f5f7 100%);
+  color: #1d1d1f;
+  padding: 16px;
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.05);
   transition: transform 180ms ease, box-shadow 180ms ease;
 }
 
 .ai-agent-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--provider-color);
+  display: none;
 }
 
 .ai-agent-card:hover {
@@ -3220,6 +3215,11 @@ body::after,
 .provider-gemini {
   --provider-color: #4285f4;
   --provider-soft: rgba(66, 133, 244, 0.13);
+}
+
+.provider-other {
+  --provider-color: #6e6e73;
+  --provider-soft: rgba(110, 110, 115, 0.12);
 }
 
 .ai-agent-card.is-awaiting {
@@ -3249,8 +3249,13 @@ body::after,
 }
 
 .ai-provider-name {
-  display: block;
-  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--provider-soft);
+  padding: 6px 10px;
   color: var(--provider-color);
   font-size: 10px;
   font-weight: 800;
@@ -3267,9 +3272,57 @@ body::after,
 
 .ai-agent-card-head {
   justify-content: space-between;
+  min-height: 30px;
 }
 
-.ai-agent-avatar,
+.ai-agent-hero-panel {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 130px;
+  margin: 12px -6px 18px;
+  border-radius: 16px;
+  border-top-right-radius: 32px;
+  background:
+    radial-gradient(circle at 32% 22%, rgba(255, 255, 255, 0.36), transparent 28%),
+    linear-gradient(135deg, var(--provider-color), #00c7be);
+}
+
+.ai-agent-hero-panel::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  right: 58px;
+  width: 72px;
+  height: 38px;
+  border-bottom-left-radius: 42px;
+  background: #ffffff;
+}
+
+.ai-agent-profile-avatar {
+  position: relative;
+  z-index: 1;
+  width: 86px;
+  height: 86px;
+  border: 4px solid rgba(255, 255, 255, 0.86);
+  border-radius: 999px;
+  object-fit: cover;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
+}
+
+.ai-agent-provider-avatar {
+  display: inline-grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--provider-color);
+}
+
+.ai-agent-provider-avatar svg {
+  width: 34px;
+  height: 34px;
+  stroke-width: 2.1;
+}
+
 .ai-prediction-avatar {
   width: 44px;
   height: 44px;
@@ -3293,6 +3346,21 @@ body::after,
   box-shadow: 0 0 0 4px rgba(142, 142, 147, 0.1);
 }
 
+.ai-agent-card.is-stopped {
+  --provider-color: #ff3b30;
+  --provider-soft: rgba(255, 59, 48, 0.12);
+}
+
+.ai-agent-card.is-stopped .ai-agent-live {
+  background: rgba(255, 59, 48, 0.1);
+  color: #c42118;
+}
+
+.ai-agent-card.is-stopped .ai-agent-live span {
+  background: #ff3b30;
+  box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.12);
+}
+
 .ai-agent-live span {
   width: 7px;
   height: 7px;
@@ -3301,46 +3369,50 @@ body::after,
   box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.12);
 }
 
-.ai-agent-card h4 {
-  margin: 16px 0 4px;
-  color: #1d1d1f;
-  font-size: 19px;
-  letter-spacing: -0.03em;
-}
-
-.ai-agent-card > p {
-  min-height: 20px;
-  margin: 0;
-  color: #86868b;
-  font-size: 12px;
-}
-
-.ai-agent-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.ai-agent-stats div {
-  display: grid;
-  gap: 3px;
+.ai-agent-identity {
   text-align: center;
 }
 
+.ai-agent-card h4 {
+  margin: 0;
+  color: #1d1d1f;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+
+.ai-agent-identity p {
+  min-height: 34px;
+  margin: 6px auto 0;
+  color: #86868b;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.ai-agent-stats {
+  margin-top: 14px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.ai-agent-stats div {
+  min-width: 0;
+}
+
 .ai-agent-stats div + div {
-  border-left: 1px solid rgba(0, 0, 0, 0.06);
+  border-left: 0;
 }
 
 .ai-agent-stats strong {
   color: #1d1d1f;
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .ai-agent-stats span {
   color: #86868b;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .ai-predictions-panel {

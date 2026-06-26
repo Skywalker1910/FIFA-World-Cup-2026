@@ -5,6 +5,25 @@ let selectedBetPlayerId = localStorage.getItem("selectedBetPlayerId") || "";
 let selectedAccountView = localStorage.getItem("selectedAccountView") || "players";
 let selectedAccountId = localStorage.getItem("selectedAccountId") || "";
 
+const aiProviderModels = {
+  OpenAI: ["GPT-5.5", "GPT-5", "GPT-4.1", "GPT-4o", "Other"],
+  Claude: ["Fable 5", "Opus 4.8", "Sonnet 4.6", "Haiku 4.5", "Other"],
+  Google: [
+    "Gemini 3.1 Pro",
+    "Gemini 3.5 Flash",
+    "Gemini 3 Flash",
+    "Gemini 3.1 Flash-Lite",
+    "Gemini 3.5 Live Translate",
+    "Gemini 3.1 Flash Live",
+    "Gemini 3.1 Flash TTS",
+    "Nano Banana 2",
+    "Nano Banana Pro",
+    "Other",
+  ],
+  xAI: ["Grok 4", "Grok 3", "Other"],
+  Other: ["Other"],
+};
+
 const elements = {
   saveStatus: document.querySelector("#saveStatus"),
   accountLabel: document.querySelector("#accountLabel"),
@@ -32,6 +51,71 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function normalizedAiProvider(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized.includes("openai") || normalized.includes("gpt")) return "OpenAI";
+  if (normalized.includes("anthropic") || normalized.includes("claude")) return "Claude";
+  if (normalized.includes("google") || normalized.includes("gemini")) return "Google";
+  if (normalized.includes("xai") || normalized.includes("grok")) return "xAI";
+  return Object.keys(aiProviderModels).includes(value) ? value : "Other";
+}
+
+function aiProviderSelect(value = "", attributes = "") {
+  const selectedValue = normalizedAiProvider(value || "OpenAI");
+  return `
+    <select data-account-field="aiProvider" data-ai-provider-select ${attributes}>
+      ${Object.keys(aiProviderModels).map((provider) => `
+        <option value="${escapeHtml(provider)}" ${provider === selectedValue ? "selected" : ""}>${escapeHtml(provider)}</option>
+      `).join("")}
+    </select>
+  `;
+}
+
+function aiModelSelect(provider = "OpenAI", value = "", attributes = "") {
+  const normalizedProvider = normalizedAiProvider(provider);
+  const models = aiProviderModels[normalizedProvider] || aiProviderModels.Other;
+  const selectedValue = models.includes(value) ? value : "Other";
+  return `
+    <select data-account-field="aiModel" data-ai-model-select ${attributes}>
+      ${models.map((model) => `
+        <option value="${escapeHtml(model)}" ${model === selectedValue ? "selected" : ""}>${escapeHtml(model)}</option>
+      `).join("")}
+    </select>
+  `;
+}
+
+function syncAiModelSelect(providerSelect) {
+  const container = providerSelect.closest(".account-form-row") || providerSelect.closest("form") || document;
+  const modelSelect = container.querySelector("[data-ai-model-select]");
+  if (!modelSelect) return;
+  const models = aiProviderModels[normalizedAiProvider(providerSelect.value)] || aiProviderModels.Other;
+  const current = modelSelect.value;
+  modelSelect.innerHTML = models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("");
+  modelSelect.value = models.includes(current) ? current : models[0];
+  syncAiCustomModelField(modelSelect);
+}
+
+function aiCustomModelInput(value = "", attributes = "") {
+  return `<input data-ai-custom-model ${attributes} value="${escapeHtml(value)}" placeholder="Enter model name">`;
+}
+
+function syncAiCustomModelField(modelSelect) {
+  const container = modelSelect.closest(".account-form-row") || modelSelect.closest("form") || document;
+  const customInput = container.querySelector("[data-ai-custom-model]");
+  if (!customInput) return;
+  customInput.hidden = modelSelect.value !== "Other";
+  customInput.disabled = modelSelect.value !== "Other";
+  if (customInput.disabled) customInput.value = "";
+}
+
+function resolveAiModelValue(container) {
+  const modelSelect = container.querySelector("[data-ai-model-select]");
+  const customInput = container.querySelector("[data-ai-custom-model]");
+  if (!modelSelect) return "";
+  if (modelSelect.value === "Other") return String(customInput?.value || "").trim() || "Other";
+  return modelSelect.value;
 }
 
 async function api(path, options = {}) {
@@ -196,6 +280,9 @@ function renderAccountEditor(user) {
   }
   const canChangeRole = isFullAdmin();
   const canDelete = isFullAdmin() && user.id !== app.user?.id;
+  const aiProvider = normalizedAiProvider(user.ai_provider || "OpenAI");
+  const aiModels = aiProviderModels[aiProvider] || aiProviderModels.Other;
+  const hasCustomAiModel = user.role === "ai_agent" && user.ai_model && !aiModels.includes(user.ai_model);
   const aiFields = user.role === "ai_agent" ? `
     <div class="account-avatar-field is-wide">
       <div class="account-avatar-preview">${user.avatar_data ? `<img src="${escapeHtml(user.avatar_data)}" alt="">` : "AI"}</div>
@@ -205,10 +292,19 @@ function renderAccountEditor(user) {
       </label>
     </div>
     <div class="account-form-row is-wide">
-      <input data-account-field="aiProvider" value="${escapeHtml(user.ai_provider || "")}" placeholder="AI provider">
-      <input data-account-field="aiModel" value="${escapeHtml(user.ai_model || "")}" placeholder="AI model">
+      ${aiProviderSelect(aiProvider)}
+      ${aiModelSelect(aiProvider, user.ai_model || "")}
+      ${aiCustomModelInput(hasCustomAiModel ? user.ai_model : "", hasCustomAiModel ? "" : "hidden disabled")}
     </div>
-    <p class="account-form-note">AI agent responses and predictions are shared across both US and India servers. Match prediction records remain server-scoped.</p>
+    <div class="account-form-row is-wide">
+      <select data-account-field="aiStatus">
+        <option value="awaiting" ${(user.ai_status || "awaiting") === "awaiting" ? "selected" : ""}>Awaiting agent</option>
+        <option value="connected" ${user.ai_status === "connected" ? "selected" : ""}>Connected</option>
+        <option value="stopped" ${user.ai_status === "stopped" ? "selected" : ""}>Stopped</option>
+      </select>
+      <input data-account-field="aiStatusMessage" value="${escapeHtml(user.ai_status_message || "")}" placeholder="Status note">
+    </div>
+    <p class="account-form-note">AI agent responses and predictions are shared globally across both US and India servers. The external agent should call the status API after provider acknowledgement or failure.</p>
   ` : "";
   return `
     <section class="account-editor admin-user" data-id="${user.id}">
@@ -275,8 +371,11 @@ function renderCreateAccountForm(role) {
               <input name="avatar" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
             </label>
           </div>
-          <input name="aiProvider" placeholder="AI provider (OpenAI)">
-          <input name="aiModel" placeholder="AI model (gpt-5.5)">
+          <div class="account-form-row is-wide">
+            ${aiProviderSelect("OpenAI", `name="aiProvider"`)}
+            ${aiModelSelect("OpenAI", "", `name="aiModel"`)}
+            ${aiCustomModelInput("", `name="aiModelCustom" hidden disabled`)}
+          </div>
           <p class="account-form-note">AI agents are created with access to both servers so their responses can be shown globally.</p>
         ` : `
           <div class="account-server-field">
@@ -358,7 +457,7 @@ function renderAccountRecords() {
               </div>
               ${roleBadge("ai_agent")}
             </div>
-            ${aiUsers.length ? aiUsers.map((user) => accountCard(user, { detail: `${user.ai_provider || "AI"} ${user.ai_model || ""}`.trim() })).join("") : `<div class="empty-state">No AI agents created yet.</div>`}
+            ${aiUsers.length ? aiUsers.map((user) => accountCard(user, { detail: `${user.ai_provider || "AI"} ${user.ai_model || ""} · ${user.ai_status || "awaiting"}`.trim() })).join("") : `<div class="empty-state">No AI agents created yet.</div>`}
           </div>
           ${isFullAdmin() ? renderAccountEditor(selectedAccount(aiUsers)) : `<div class="empty-state">AI agents are globally managed by the main admin.</div>`}
         </div>
@@ -438,7 +537,7 @@ function renderAccount() {
 }
 
 function renderAdminBetsTable(server, state) {
-  const players = state.users.filter((user) => ["player", "ai_agent"].includes(user.role) && user.is_active && (user.servers || []).includes(server));
+  const players = state.users.filter((user) => user.role === "player" && user.is_active && (user.servers || []).includes(server));
   if (players.length && !players.some((player) => String(player.id) === String(selectedBetPlayerId))) {
     selectedBetPlayerId = String(players[0].id);
     localStorage.setItem("selectedBetPlayerId", selectedBetPlayerId);
@@ -687,6 +786,16 @@ elements.adminUsers.addEventListener("change", (event) => {
     renderAll();
     return;
   }
+  const providerSelect = event.target.closest("[data-ai-provider-select]");
+  if (providerSelect) {
+    syncAiModelSelect(providerSelect);
+    return;
+  }
+  const modelSelect = event.target.closest("[data-ai-model-select]");
+  if (modelSelect) {
+    syncAiCustomModelField(modelSelect);
+    return;
+  }
   const avatarInput = event.target.closest("[data-account-avatar], [name='avatar']");
   if (!avatarInput) return;
   const preview = avatarInput.closest(".account-avatar-field")?.querySelector(".account-avatar-preview");
@@ -711,6 +820,10 @@ elements.adminUsers.addEventListener("submit", async (event) => {
     const role = form.dataset.createRole === "ai_agent" && isFullAdmin() ? "ai_agent" : "player";
     const data = Object.fromEntries(formData);
     data.role = role;
+    if (role === "ai_agent") {
+      data.aiModel = resolveAiModelValue(form);
+      delete data.aiModelCustom;
+    }
     data.avatarData = role === "ai_agent" ? await fileToDataUrl(form.querySelector("[name='avatar']")?.files?.[0]) : "";
     data.serverAccess = role === "ai_agent"
       ? ["US", "India"]
@@ -770,6 +883,7 @@ elements.adminUsers.addEventListener("click", async (event) => {
     row.querySelectorAll("[data-account-field]").forEach((input) => {
       values[input.dataset.accountField] = input.type === "checkbox" ? input.checked : input.value;
     });
+    if (values.role === "ai_agent") values.aiModel = resolveAiModelValue(row);
     values.serverAccess = values.role === "ai_agent"
       ? ["US", "India"]
       : [...row.querySelectorAll("[data-account-server]:checked")].map((input) => input.dataset.accountServer);
