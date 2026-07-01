@@ -47,6 +47,58 @@ const finalSportsStatuses = new Set(["FT", "AET", "PEN", "FINISHED"]);
 const sportsSyncMinutes = Math.max(1, Number(process.env.FOOTBALL_DATA_SYNC_MINUTES || 15));
 const autoSyncEnabled = process.env.FOOTBALL_DATA_AUTO_SYNC === "true";
 const predictionLockAt = process.env.PREDICTION_LOCK_AT || "2026-06-27T23:59:59-04:00";
+const confirmedRoundOf32Fixtures = new Map([
+  [73, ["South Africa", "Canada"]],
+  [74, ["Germany", "Paraguay"]],
+  [75, ["Netherlands", "Morocco"]],
+  [76, ["Brazil", "Japan"]],
+  [77, ["Côte d'Ivoire", "Norway"]],
+  [78, ["France", "Sweden"]],
+  [79, ["Mexico", "Ecuador"]],
+  [80, ["England", "Congo DR"]],
+  [81, ["USA", "Bosnia & Herzegovina"]],
+  [82, ["Belgium", "Senegal"]],
+  [83, ["Portugal", "Croatia"]],
+  [84, ["Spain", "Austria"]],
+  [85, ["Switzerland", "Algeria"]],
+  [86, ["Argentina", "Cabo Verde"]],
+  [87, ["Colombia", "Ghana"]],
+  [88, ["Australia", "Egypt"]],
+]);
+const confirmedKnockoutResults = new Map([
+  [74, {
+    team1Score: 1,
+    team2Score: 1,
+    team1PenaltyScore: 3,
+    team2PenaltyScore: 4,
+    result: "Team 2",
+    matchStatus: "PEN",
+  }],
+  [75, {
+    team1Score: 1,
+    team2Score: 1,
+    team1PenaltyScore: 2,
+    team2PenaltyScore: 3,
+    result: "Team 2",
+    matchStatus: "PEN",
+  }],
+  [77, {
+    team1Score: 1,
+    team2Score: 2,
+    team1PenaltyScore: null,
+    team2PenaltyScore: null,
+    result: "Team 2",
+    matchStatus: "AET",
+  }],
+  [78, {
+    team1Score: 3,
+    team2Score: 0,
+    team1PenaltyScore: null,
+    team2PenaltyScore: null,
+    result: "Team 1",
+    matchStatus: "FT",
+  }],
+]);
 
 function footballDataConfig() {
   const keySource = process.env.FOOTBALL_DATA_API_KEY
@@ -320,6 +372,7 @@ function isPlaceholderTeamName(teamName) {
   const normalized = String(teamName || "").trim().toLowerCase();
   return !normalized
     || /^(winner|runner-up|runner up|loser)\b/.test(normalized)
+    || /^best\s*3rd\b/.test(normalized)
     || /^(tbd|to be decided|team\s*[12])$/.test(normalized)
     || /placeholder/.test(normalized);
 }
@@ -327,6 +380,170 @@ function isPlaceholderTeamName(teamName) {
 function isSettledMatch(match) {
   return Boolean(match.result)
     || ["FT", "AET", "PEN", "FINISHED"].includes(String(match.match_status || "").toUpperCase());
+}
+
+function matchHasScore(match) {
+  return match.team1_score !== null
+    && match.team1_score !== undefined
+    && match.team2_score !== null
+    && match.team2_score !== undefined;
+}
+
+function matchResult(match) {
+  if (match.result) return match.result;
+  if (!matchHasScore(match)) return "";
+  if (Number(match.team1_score) > Number(match.team2_score)) return "Team 1";
+  if (Number(match.team2_score) > Number(match.team1_score)) return "Team 2";
+  return "Draw";
+}
+
+function compareStandingRows(a, b) {
+  return b.points - a.points
+    || b.gd - a.gd
+    || b.gf - a.gf
+    || String(a.team).localeCompare(String(b.team));
+}
+
+function groupStandingsFromMatches(matches) {
+  const groups = new Map();
+  matches
+    .filter((match) => match.group_name)
+    .forEach((match) => {
+      if (!groups.has(match.group_name)) groups.set(match.group_name, new Map());
+      const table = groups.get(match.group_name);
+      if (!table.has(match.team1)) table.set(match.team1, { team: match.team1, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0 });
+      if (!table.has(match.team2)) table.set(match.team2, { team: match.team2, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0 });
+      if (!matchHasScore(match) || !isSettledMatch(match)) return;
+
+      const home = table.get(match.team1);
+      const away = table.get(match.team2);
+      const homeGoals = Number(match.team1_score);
+      const awayGoals = Number(match.team2_score);
+      home.played += 1;
+      away.played += 1;
+      home.gf += homeGoals;
+      home.ga += awayGoals;
+      away.gf += awayGoals;
+      away.ga += homeGoals;
+      home.gd = home.gf - home.ga;
+      away.gd = away.gf - away.ga;
+      if (homeGoals > awayGoals) {
+        home.won += 1;
+        away.lost += 1;
+        home.points += 3;
+      } else if (awayGoals > homeGoals) {
+        away.won += 1;
+        home.lost += 1;
+        away.points += 3;
+      } else {
+        home.drawn += 1;
+        away.drawn += 1;
+        home.points += 1;
+        away.points += 1;
+      }
+    });
+
+  return [...groups.entries()].map(([group, table]) => ({
+    group,
+    rows: [...table.values()].sort(compareStandingRows),
+  })).sort((left, right) => left.group.localeCompare(right.group));
+}
+
+function qualificationProjectionFromMatches(matches) {
+  const groups = groupStandingsFromMatches(matches);
+  const groupMap = new Map(groups.map(({ group, rows }) => [group, rows]));
+  const groupCompletion = new Map(groups.map(({ group }) => {
+    const groupMatches = matches.filter((match) => match.group_name === group);
+    return [group, groupMatches.length > 0 && groupMatches.every((match) => matchHasScore(match) && isSettledMatch(match))];
+  }));
+  const allGroupsComplete = [...groupCompletion.values()].length > 0 && [...groupCompletion.values()].every(Boolean);
+  const thirdRankings = [];
+  groups.forEach(({ group, rows }) => {
+    rows.forEach((row, index) => {
+      row.group = group;
+      row.rank = index + 1;
+      row.groupComplete = Boolean(groupCompletion.get(group));
+      if (index === 2) thirdRankings.push({ ...row, group, rank: 3 });
+    });
+  });
+  thirdRankings.sort(compareStandingRows).forEach((row, index) => {
+    row.thirdRank = index + 1;
+    row.qualified = allGroupsComplete && index < 8;
+  });
+  return { groupMap, groupCompletion, allGroupsComplete, thirdRankings };
+}
+
+function resolveGroupSeed(seed, projection, assignedThirdGroups = new Set()) {
+  const value = String(seed || "");
+  const winner = value.match(/^Winner Group ([A-L])$/i);
+  if (winner) {
+    const group = winner[1].toUpperCase();
+    return projection.groupCompletion.get(group) ? projection.groupMap.get(group)?.[0]?.team || value : value;
+  }
+  const runnerUp = value.match(/^Runner-up Group ([A-L])$/i);
+  if (runnerUp) {
+    const group = runnerUp[1].toUpperCase();
+    return projection.groupCompletion.get(group) ? projection.groupMap.get(group)?.[1]?.team || value : value;
+  }
+  const bestThird = value.match(/^Best 3rd \(([^)]+)\)$/i);
+  if (bestThird) {
+    const candidateGroups = bestThird[1].split("/").map((group) => group.trim().toUpperCase());
+    const candidate = projection.thirdRankings.find((row) =>
+      row.groupComplete
+        && candidateGroups.includes(row.group)
+        && (
+          !projection.allGroupsComplete
+          || (row.qualified && !assignedThirdGroups.has(row.group))
+        )
+    );
+    if (candidate) {
+      if (projection.allGroupsComplete) assignedThirdGroups.add(candidate.group);
+      return candidate.team;
+    }
+  }
+  return value;
+}
+
+function resolveKnockoutTeam(seed, fixturesById, projection, assignedThirdGroups) {
+  const matchRef = String(seed || "").match(/^(Winner|Loser) Match (\d+)$/i);
+  if (matchRef) {
+    const fixture = fixturesById.get(Number(matchRef[2]));
+    const result = fixture ? matchResult(fixture) : "";
+    if (!fixture || !result || result === "Draw") return seed;
+    if (matchRef[1].toLowerCase() === "winner") return result === "Team 1" ? fixture.team1 : fixture.team2;
+    return result === "Team 1" ? fixture.team2 : fixture.team1;
+  }
+  return resolveGroupSeed(seed, projection, assignedThirdGroups);
+}
+
+function resolvedKnockoutMatches(matches) {
+  const baseById = new Map(fixtureRows().map((fixture) => [Number(fixture.id), fixture]));
+  const projection = qualificationProjectionFromMatches(matches);
+  const resolvedById = new Map();
+  const assignedThirdGroups = new Set();
+  return [...matches]
+    .sort((left, right) => Number(left.id) - Number(right.id))
+    .map((match) => {
+      const base = baseById.get(Number(match.id));
+      const next = { ...match };
+      const confirmedTeams = confirmedRoundOf32Fixtures.get(Number(match.id));
+      if (confirmedTeams) {
+        next.team1 = confirmedTeams[0];
+        next.team2 = confirmedTeams[1];
+      }
+      if (match.stage && match.stage !== "Group Stage") {
+        const seed1 = base?.team1 || match.team1;
+        const seed2 = base?.team2 || match.team2;
+        if (!confirmedTeams && (isPlaceholderTeamName(match.team1) || isPlaceholderTeamName(seed1))) {
+          next.team1 = resolveKnockoutTeam(seed1, resolvedById, projection, assignedThirdGroups);
+        }
+        if (!confirmedTeams && (isPlaceholderTeamName(match.team2) || isPlaceholderTeamName(seed2))) {
+          next.team2 = resolveKnockoutTeam(seed2, resolvedById, projection, assignedThirdGroups);
+        }
+      }
+      resolvedById.set(Number(next.id), next);
+      return next;
+    });
 }
 
 async function initDb() {
@@ -377,6 +594,8 @@ async function initDb() {
       team2 TEXT,
       team1_score INTEGER,
       team2_score INTEGER,
+      team1_penalty_score INTEGER,
+      team2_penalty_score INTEGER,
       result TEXT,
       match_status TEXT,
       notes TEXT,
@@ -436,6 +655,17 @@ async function initDb() {
     await runSql("ALTER TABLE matches ADD COLUMN match_status TEXT;");
   } catch (error) {
     if (!String(error.message).includes("duplicate column name")) throw error;
+  }
+
+  for (const statement of [
+    "ALTER TABLE matches ADD COLUMN team1_penalty_score INTEGER;",
+    "ALTER TABLE matches ADD COLUMN team2_penalty_score INTEGER;",
+  ]) {
+    try {
+      await runSql(statement);
+    } catch (error) {
+      if (!String(error.message).includes("duplicate column name")) throw error;
+    }
   }
 
   try {
@@ -630,8 +860,36 @@ async function initDb() {
   }
 
   await runSql("UPDATE matches SET match_status = 'FT' WHERE result IS NOT NULL AND (match_status IS NULL OR match_status = '');");
+  await applyConfirmedKnockoutFixtures();
 
   await seedInitialPlayers();
+}
+
+async function applyConfirmedKnockoutFixtures() {
+  const fixtureStatements = [...confirmedRoundOf32Fixtures.entries()].map(([id, teams]) => `
+    UPDATE matches
+    SET team1 = ${sqlValue(teams[0])},
+        team2 = ${sqlValue(teams[1])},
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ${sqlValue(id)}
+      AND (
+        team1 != ${sqlValue(teams[0])}
+        OR team2 != ${sqlValue(teams[1])}
+      );
+  `).join("\n");
+  const resultStatements = [...confirmedKnockoutResults.entries()].map(([id, result]) => `
+    UPDATE matches
+    SET team1_score = ${sqlValue(result.team1Score)},
+        team2_score = ${sqlValue(result.team2Score)},
+        team1_penalty_score = ${sqlValue(result.team1PenaltyScore)},
+        team2_penalty_score = ${sqlValue(result.team2PenaltyScore)},
+        result = ${sqlValue(result.result)},
+        match_status = ${sqlValue(result.matchStatus)},
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ${sqlValue(id)};
+  `).join("\n");
+  const statements = [fixtureStatements, resultStatements].filter(Boolean).join("\n");
+  if (statements) await runSql(statements);
 }
 
 async function seedDefaultAdmins() {
@@ -811,6 +1069,7 @@ async function appState(user = null, selectedServer = "US") {
     runSql(`SELECT * FROM bets WHERE server = ${sqlValue(server)} ORDER BY match_id, user_id;`, true),
   ]);
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
+  const displayMatches = resolvedKnockoutMatches(matches);
   const stake = Number(settings.stake || 1);
   const allUsersWithAccess = users.map((row) => ({ ...row, servers: parseServerAccess(row.server_access, row.role) }));
   const usersWithAccess = user?.role === "admin" && !isFullAdmin(user)
@@ -850,7 +1109,7 @@ async function appState(user = null, selectedServer = "US") {
     roi: 0,
   }));
 
-  const fixtures = matches.map((match) => {
+  const fixtures = displayMatches.map((match) => {
     const matchBets = bets.filter((bet) => bet.match_id === match.id);
     const rows = settlement(match, matchBets, players, stake, server);
     rows.forEach((row) => {
@@ -892,6 +1151,8 @@ async function appState(user = null, selectedServer = "US") {
       team2: match.team2,
       team1Score: match.team1_score,
       team2Score: match.team2_score,
+      team1PenaltyScore: match.team1_penalty_score,
+      team2PenaltyScore: match.team2_penalty_score,
       result: match.result,
       status: match.match_status,
       notes: match.notes,
@@ -973,7 +1234,7 @@ async function aiPredictionsState() {
              users.display_name, users.avatar_data, users.ai_provider, users.ai_model,
              matches.stage, matches.group_name, matches.match_date, matches.kickoff, matches.kickoff_at,
              matches.venue, matches.team1, matches.team2, matches.team1_score, matches.team2_score,
-             matches.result, matches.match_status
+             matches.team1_penalty_score, matches.team2_penalty_score, matches.result, matches.match_status
       FROM ai_predictions
       JOIN users ON users.id = ai_predictions.user_id
       JOIN matches ON matches.id = ai_predictions.match_id
@@ -1036,6 +1297,8 @@ async function aiPredictionsState() {
       team2: row.team2,
       team1Score: row.team1_score,
       team2Score: row.team2_score,
+      team1PenaltyScore: row.team1_penalty_score,
+      team2PenaltyScore: row.team2_penalty_score,
       result: row.result,
       status: row.match_status,
       locked: isLocked({ kickoff_at: row.kickoff_at }),
@@ -1161,6 +1424,36 @@ async function syncSportsResults() {
     return date.toISOString().slice(0, 10);
   }
 
+  function sourceKickoffIso(item) {
+    return item.utcDate
+      || item.fixture?.date
+      || item.dateEvent
+      || item.strTimestamp
+      || null;
+  }
+
+  function findLocalMatchForSource(item, home, away, localMatches, localByTeams) {
+    const normalHome = normalizeTeamName(home);
+    const normalAway = normalizeTeamName(away);
+    const teamMatch = localByTeams.get(`${normalHome}|${normalAway}`) || localByTeams.get(`${normalAway}|${normalHome}`);
+    if (teamMatch) return teamMatch;
+
+    const sourceKickoff = sourceKickoffIso(item);
+    if (!sourceKickoff) return null;
+    const sourceTime = new Date(sourceKickoff).getTime();
+    if (!Number.isFinite(sourceTime)) return null;
+    const candidates = localMatches
+      .filter((match) => match.stage && match.stage !== "Group Stage")
+      .filter((match) => isPlaceholderTeamName(match.team1) || isPlaceholderTeamName(match.team2))
+      .map((match) => ({
+        match,
+        diff: Math.abs(new Date(match.kickoff_at || 0).getTime() - sourceTime),
+      }))
+      .filter((entry) => Number.isFinite(entry.diff) && entry.diff <= 3 * 60 * 60 * 1000)
+      .sort((left, right) => left.diff - right.diff);
+    return candidates[0]?.match || null;
+  }
+
   async function fetchDateWindowMatches() {
     const today = new Date();
     const before = Math.floor((dateWindowDays - 1) / 2);
@@ -1182,12 +1475,15 @@ async function syncSportsResults() {
   }
 
   const sourceMatches = apiResult.rows;
-  const localMatches = await runSql("SELECT id, team1, team2 FROM matches;", true);
+  const rawLocalMatches = await runSql("SELECT id, stage, group_name, kickoff_at, team1, team2, team1_score, team2_score, team1_penalty_score, team2_penalty_score, result, match_status FROM matches;", true);
+  const rawLocalById = new Map(rawLocalMatches.map((match) => [Number(match.id), match]));
+  const localMatches = resolvedKnockoutMatches(rawLocalMatches);
   const localByTeams = new Map(localMatches.map((match) => [
     `${normalizeTeamName(match.team1)}|${normalizeTeamName(match.team2)}`,
     match,
   ]));
   let updated = 0;
+  let fixtureTeamsUpdated = 0;
   let unmatched = 0;
   let skippedWithoutScore = 0;
   const unmatchedSamples = [];
@@ -1197,24 +1493,65 @@ async function syncSportsResults() {
     const away = item.awayTeam?.name || item.awayTeam?.shortName || item.teams?.away?.name || item.strAwayTeam;
     const homeScore = item.score?.fullTime?.home ?? item.score?.regularTime?.home ?? item.goals?.home ?? item.intHomeScore;
     const awayScore = item.score?.fullTime?.away ?? item.score?.regularTime?.away ?? item.goals?.away ?? item.intAwayScore;
+    const homePenaltyScore = item.score?.penalties?.home ?? item.score?.penalty?.home ?? item.score?.penaltyShootout?.home ?? null;
+    const awayPenaltyScore = item.score?.penalties?.away ?? item.score?.penalty?.away ?? item.score?.penaltyShootout?.away ?? null;
     const status = item.status || item.fixture?.status?.short || item.fixture?.status?.long || "";
-    if (!home || !away || homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) {
-      skippedWithoutScore += 1;
-      continue;
-    }
+    if (!home || !away) continue;
 
-    const normalHome = normalizeTeamName(home);
-    const normalAway = normalizeTeamName(away);
-    const localMatch = localByTeams.get(`${normalHome}|${normalAway}`) || localByTeams.get(`${normalAway}|${normalHome}`);
+    const localMatch = findLocalMatchForSource(item, home, away, localMatches, localByTeams);
     if (!localMatch) {
       unmatched += 1;
       if (unmatchedSamples.length < 5) unmatchedSamples.push(`${home} vs ${away}`);
       continue;
     }
 
+    const rawLocalMatch = rawLocalById.get(Number(localMatch.id)) || localMatch;
+    const team1WasPlaceholder = isPlaceholderTeamName(rawLocalMatch.team1);
+    const team2WasPlaceholder = isPlaceholderTeamName(rawLocalMatch.team2);
+    if (team1WasPlaceholder || team2WasPlaceholder) {
+      const localTeam1IsHome = normalizeTeamName(localMatch.team1) === normalizeTeamName(home);
+      const nextTeam1 = localTeam1IsHome ? home : away;
+      const nextTeam2 = localTeam1IsHome ? away : home;
+      await runSql(`
+        UPDATE matches
+        SET team1 = ${sqlValue(team1WasPlaceholder ? nextTeam1 : rawLocalMatch.team1)},
+            team2 = ${sqlValue(team2WasPlaceholder ? nextTeam2 : rawLocalMatch.team2)},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${sqlValue(localMatch.id)};
+      `);
+      localMatch.team1 = team1WasPlaceholder ? nextTeam1 : localMatch.team1;
+      localMatch.team2 = team2WasPlaceholder ? nextTeam2 : localMatch.team2;
+      localByTeams.set(`${normalizeTeamName(localMatch.team1)}|${normalizeTeamName(localMatch.team2)}`, localMatch);
+      fixtureTeamsUpdated += 1;
+    }
+
+    if (homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) {
+      skippedWithoutScore += 1;
+      continue;
+    }
+
+    const normalAway = normalizeTeamName(away);
     const reversed = normalizeTeamName(localMatch.team1) === normalAway;
-    const team1Score = reversed ? Number(awayScore) : Number(homeScore);
-    const team2Score = reversed ? Number(homeScore) : Number(awayScore);
+    let team1Score = reversed ? Number(awayScore) : Number(homeScore);
+    let team2Score = reversed ? Number(homeScore) : Number(awayScore);
+    const hasApiPenaltyScores = homePenaltyScore !== null
+      && homePenaltyScore !== undefined
+      && awayPenaltyScore !== null
+      && awayPenaltyScore !== undefined;
+    const team1PenaltyScore = hasApiPenaltyScores ? Number(reversed ? awayPenaltyScore : homePenaltyScore) : null;
+    const team2PenaltyScore = hasApiPenaltyScores ? Number(reversed ? homePenaltyScore : awayPenaltyScore) : null;
+    if (hasApiPenaltyScores && team1Score !== team2Score) {
+      const normalizedTeam1Score = team1Score - team1PenaltyScore;
+      const normalizedTeam2Score = team2Score - team2PenaltyScore;
+      if (
+        normalizedTeam1Score >= 0
+        && normalizedTeam2Score >= 0
+        && normalizedTeam1Score === normalizedTeam2Score
+      ) {
+        team1Score = normalizedTeam1Score;
+        team2Score = normalizedTeam2Score;
+      }
+    }
     const isFinal = finalSportsStatuses.has(String(status).toUpperCase());
     const apiWinner = String(item.score?.winner || "").toUpperCase();
     const result = isFinal
@@ -1222,13 +1559,23 @@ async function syncSportsResults() {
         ? reversed ? "Team 2" : "Team 1"
         : apiWinner === "AWAY_TEAM"
           ? reversed ? "Team 1" : "Team 2"
-          : team1Score > team2Score ? "Team 1" : team2Score > team1Score ? "Team 2" : "Draw"
+          : team1Score > team2Score
+            ? "Team 1"
+            : team2Score > team1Score
+              ? "Team 2"
+              : hasApiPenaltyScores && team1PenaltyScore > team2PenaltyScore
+                ? "Team 1"
+                : hasApiPenaltyScores && team2PenaltyScore > team1PenaltyScore
+                  ? "Team 2"
+                  : "Draw"
       : null;
 
     await runSql(`
       UPDATE matches
       SET team1_score = ${sqlValue(team1Score)},
           team2_score = ${sqlValue(team2Score)},
+          team1_penalty_score = ${sqlValue(team1PenaltyScore)},
+          team2_penalty_score = ${sqlValue(team2PenaltyScore)},
           result = COALESCE(${sqlValue(result)}, result),
           match_status = ${sqlValue(status)},
           updated_at = CURRENT_TIMESTAMP
@@ -1238,6 +1585,7 @@ async function syncSportsResults() {
   }
   const result = {
     updated,
+    fixtureTeamsUpdated,
     unmatched,
     sourceMatches: sourceMatches.length,
     skippedWithoutScore,
@@ -1245,7 +1593,7 @@ async function syncSportsResults() {
     apiErrors: apiResult.errors,
     apiSource: apiResult.url.replace(footballDataBaseUrl, ""),
     config,
-    message: `football-data.org sync saw ${sourceMatches.length} API matches and updated ${updated}${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}${apiResult.errors ? `; API reported ${JSON.stringify(apiResult.errors)}` : ""}.`,
+    message: `football-data.org sync saw ${sourceMatches.length} API matches, updated ${updated} scores, and resolved ${fixtureTeamsUpdated} fixture teams${skippedWithoutScore ? `; ${skippedWithoutScore} had no score yet` : ""}${unmatched ? `; ${unmatched} did not match tracker teams` : ""}${apiResult.errors ? `; API reported ${JSON.stringify(apiResult.errors)}` : ""}.`,
   };
   lastSyncStatus = {
     ...lastSyncStatus,
@@ -1963,6 +2311,8 @@ async function router(request, response) {
         team2 = COALESCE(${sqlValue(body.team2)}, team2),
         team1_score = ${sqlValue(body.team1Score)},
         team2_score = ${sqlValue(body.team2Score)},
+        team1_penalty_score = ${sqlValue(body.team1PenaltyScore)},
+        team2_penalty_score = ${sqlValue(body.team2PenaltyScore)},
         result = ${sqlValue(body.result)},
         match_status = ${sqlValue(body.matchStatus)},
         notes = COALESCE(${sqlValue(body.notes)}, notes),

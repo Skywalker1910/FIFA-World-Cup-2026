@@ -267,8 +267,88 @@ function hasScore(fixture) {
     && fixture.team2Score !== undefined;
 }
 
+function hasPenaltyShootout(fixture) {
+  return fixture.team1PenaltyScore !== null
+    && fixture.team1PenaltyScore !== undefined
+    && fixture.team2PenaltyScore !== null
+    && fixture.team2PenaltyScore !== undefined;
+}
+
+function displayScores(fixture) {
+  const team1Score = Number(fixture.team1Score);
+  const team2Score = Number(fixture.team2Score);
+  if (!Number.isFinite(team1Score) || !Number.isFinite(team2Score)) return { team1: null, team2: null };
+  if (!hasPenaltyShootout(fixture)) return { team1: team1Score, team2: team2Score };
+
+  const team1PenaltyScore = Number(fixture.team1PenaltyScore);
+  const team2PenaltyScore = Number(fixture.team2PenaltyScore);
+  const normalizedTeam1Score = team1Score - team1PenaltyScore;
+  const normalizedTeam2Score = team2Score - team2PenaltyScore;
+  if (
+    Number.isFinite(normalizedTeam1Score)
+    && Number.isFinite(normalizedTeam2Score)
+    && normalizedTeam1Score >= 0
+    && normalizedTeam2Score >= 0
+    && normalizedTeam1Score === normalizedTeam2Score
+    && team1Score !== team2Score
+  ) {
+    return { team1: normalizedTeam1Score, team2: normalizedTeam2Score };
+  }
+  return { team1: team1Score, team2: team2Score };
+}
+
 function scoreText(fixture) {
-  return hasScore(fixture) ? `${fixture.team1Score} - ${fixture.team2Score}` : "-";
+  if (!hasScore(fixture)) return "-";
+  const scores = displayScores(fixture);
+  return `${scores.team1} - ${scores.team2}`;
+}
+
+function penaltyText(fixture) {
+  return hasPenaltyShootout(fixture) ? `Penalties ${fixture.team1PenaltyScore} - ${fixture.team2PenaltyScore}` : "";
+}
+
+function scoreDetailText(fixture, options = {}) {
+  if (hasPenaltyShootout(fixture)) {
+    const label = options.short ? "Pens" : "Penalty shootout";
+    return `${label} ${fixture.team1PenaltyScore} - ${fixture.team2PenaltyScore}`;
+  }
+  if (String(fixture.status || "").toUpperCase() === "AET") return "After extra time";
+  return "";
+}
+
+function scoreWithPenaltyText(fixture) {
+  const regularScore = scoreText(fixture);
+  const detail = scoreDetailText(fixture, { short: true });
+  return detail ? `${regularScore} · ${detail}` : regularScore;
+}
+
+function scoreDisplay(fixture, options = {}) {
+  const detail = scoreDetailText(fixture, options);
+  return `
+    <div class="score-display ${detail ? "has-score-detail" : ""} ${options.compact ? "is-compact" : ""}">
+      <strong class="score-main">${escapeHtml(scoreText(fixture))}</strong>
+      ${detail ? `<span class="score-detail">${escapeHtml(detail)}</span>` : ""}
+    </div>
+  `;
+}
+
+function bracketTeamScore(fixture, teamIndex) {
+  const scores = displayScores(fixture);
+  const score = teamIndex === 1 ? scores.team1 : scores.team2;
+  const penaltyScore = teamIndex === 1 ? fixture.team1PenaltyScore : fixture.team2PenaltyScore;
+  if (score === null || score === undefined) return `<span class="bracket-score-stack"></span>`;
+  return `
+    <span class="bracket-score-stack ${hasPenaltyShootout(fixture) ? "has-penalties" : ""}">
+      <strong>${escapeHtml(score)}</strong>
+      ${hasPenaltyShootout(fixture) ? `<small>(${escapeHtml(penaltyScore)})</small>` : ""}
+    </span>
+  `;
+}
+
+function displayTeamScore(fixture, teamIndex) {
+  const scores = displayScores(fixture);
+  const score = teamIndex === 1 ? scores.team1 : scores.team2;
+  return score === null || score === undefined ? "-" : score;
 }
 
 function countdownText(fixture) {
@@ -297,6 +377,8 @@ function displayStatusLabel(label) {
   const normalized = String(label || "").toLowerCase();
   if (normalized === "paused" || normalized === "pause" || normalized === "ht" || normalized.includes("half")) return "Half-Time";
   if (normalized === "in_play" || normalized === "in-play" || normalized === "in progress") return "Live";
+  if (normalized === "et" || normalized === "aet" || normalized.includes("extra")) return "Extra Time";
+  if (normalized === "pen" || normalized.includes("penalt")) return "Penalties";
   if (normalized === "ft" || normalized === "finished") return "Final";
   return label || "";
 }
@@ -304,6 +386,8 @@ function displayStatusLabel(label) {
 function statusBadgeClass(label) {
   const normalized = String(label || "").toLowerCase();
   if (normalized.includes("half") || normalized === "paused" || normalized === "pause" || normalized === "ht") return "half";
+  if (normalized.includes("penalt")) return "penalties";
+  if (normalized.includes("extra")) return "extra";
   if (normalized.includes("live") || normalized.includes("progress")) return "live";
   if (normalized.includes("locked")) return "locked";
   if (normalized.includes("open")) return "open";
@@ -317,15 +401,17 @@ function statusBadge(label) {
 }
 
 function matchMetaChips(fixture) {
-  const statusLabel = fixtureStatusLabel(fixture);
+  const isFinal = fixture.result || isFinalFixture(fixture);
   const countdownLabel = countdownText(fixture);
   const countdownStatusClass = ["live", "half", "ended"].includes(statusBadgeClass(countdownLabel))
     ? `match-chip-status status-${statusBadgeClass(countdownLabel)}`
     : "";
   const chips = [
     { label: fixture.group ? `Group ${fixture.group}` : fixture.stage, className: "" },
-    { label: statusLabel, className: `match-chip-status status-${statusBadgeClass(statusLabel)}` },
-    { label: countdownLabel, className: countdownStatusClass },
+    isFinal ? { label: "Final", className: "match-chip-status status-ended" } : { label: fixtureStatusLabel(fixture), className: `match-chip-status status-${statusBadgeClass(fixtureStatusLabel(fixture))}` },
+    hasPenaltyShootout(fixture) ? { label: "Penalties", className: "match-chip-status status-penalties" } : null,
+    !hasPenaltyShootout(fixture) && String(fixture.status || "").toUpperCase() === "AET" ? { label: "Extra Time", className: "match-chip-status status-extra" } : null,
+    !isFinal ? { label: countdownLabel, className: countdownStatusClass } : null,
   ].filter(Boolean);
   return `<div class="match-chip-row">${chips
     .filter((chip) => chip.label)
@@ -544,18 +630,84 @@ function renderLeaderboard() {
 }
 
 function renderRecentSettlements() {
-  const scored = app.state.fixtures.filter((fixture) => fixture.result || hasScore(fixture)).slice(-6).reverse();
-  elements.settlementCount.textContent = `${scored.length} shown`;
-  elements.recentSettlements.innerHTML = scored.length ? scored.map((fixture) => `
-    <div class="compact-item">
+  const scored = app.state.fixtures.filter(hasScore);
+  const teamStats = new Map();
+  scored.forEach((fixture) => {
+    const team1Goals = Number(fixture.team1Score);
+    const team2Goals = Number(fixture.team2Score);
+    if (!teamStats.has(fixture.team1)) teamStats.set(fixture.team1, { team: fixture.team1, goalsFor: 0, goalsAgainst: 0, cleanSheets: 0 });
+    if (!teamStats.has(fixture.team2)) teamStats.set(fixture.team2, { team: fixture.team2, goalsFor: 0, goalsAgainst: 0, cleanSheets: 0 });
+    const team1 = teamStats.get(fixture.team1);
+    const team2 = teamStats.get(fixture.team2);
+    team1.goalsFor += team1Goals;
+    team1.goalsAgainst += team2Goals;
+    team2.goalsFor += team2Goals;
+    team2.goalsAgainst += team1Goals;
+    if (team2Goals === 0) team1.cleanSheets += 1;
+    if (team1Goals === 0) team2.cleanSheets += 1;
+  });
+
+  const totalGoals = scored.reduce((sum, fixture) => sum + Number(fixture.team1Score) + Number(fixture.team2Score), 0);
+  const topScoringTeam = [...teamStats.values()].sort((left, right) => right.goalsFor - left.goalsFor || left.team.localeCompare(right.team))[0];
+  const cleanSheetLeader = [...teamStats.values()].sort((left, right) => right.cleanSheets - left.cleanSheets || left.team.localeCompare(right.team))[0];
+  const highestScoringMatch = [...scored].sort((left, right) =>
+    (Number(right.team1Score) + Number(right.team2Score)) - (Number(left.team1Score) + Number(left.team2Score))
+    || Number(right.id) - Number(left.id)
+  )[0];
+  const biggestWin = [...scored].sort((left, right) =>
+    Math.abs(Number(right.team1Score) - Number(right.team2Score)) - Math.abs(Number(left.team1Score) - Number(left.team2Score))
+    || Number(right.id) - Number(left.id)
+  )[0];
+  const biggestWinLabel = biggestWin && Number(biggestWin.team1Score) !== Number(biggestWin.team2Score)
+    ? `${Number(biggestWin.team1Score) > Number(biggestWin.team2Score) ? biggestWin.team1 : biggestWin.team2} by ${Math.abs(Number(biggestWin.team1Score) - Number(biggestWin.team2Score))}`
+    : "No wins yet";
+
+  const stats = [
+    {
+      icon: "goal",
+      title: "Goals Scored",
+      value: totalGoals,
+      detail: `${scored.length ? (totalGoals / scored.length).toFixed(1) : "0.0"} per scored match`,
+    },
+    {
+      icon: "flame",
+      title: "Top Scoring Team",
+      value: topScoringTeam ? topScoringTeam.goalsFor : "—",
+      detail: topScoringTeam ? topScoringTeam.team : "No scores yet",
+      team: topScoringTeam?.team,
+    },
+    {
+      icon: "shield-check",
+      title: "Clean Sheet Leader",
+      value: cleanSheetLeader ? cleanSheetLeader.cleanSheets : "—",
+      detail: cleanSheetLeader ? cleanSheetLeader.team : "No clean sheets yet",
+      team: cleanSheetLeader?.team,
+    },
+    {
+      icon: "activity",
+      title: "Highest Scoring Match",
+      value: highestScoringMatch ? scoreText(highestScoringMatch) : "—",
+      detail: highestScoringMatch ? `#${highestScoringMatch.id} ${highestScoringMatch.team1} vs ${highestScoringMatch.team2}` : "No scores yet",
+    },
+    {
+      icon: "trending-up",
+      title: "Biggest Win",
+      value: biggestWinLabel,
+      detail: biggestWin ? `#${biggestWin.id} ${scoreText(biggestWin)}` : "No scored matches yet",
+    },
+  ];
+
+  elements.settlementCount.textContent = `${scored.length} scored matches`;
+  elements.recentSettlements.innerHTML = scored.length ? stats.map((stat) => `
+    <div class="compact-item tournament-stat-item">
       <div>
-        <strong>#${fixture.id}</strong>
-        <div class="mini-teams">${teamBadge(fixture.team1, { compact: true })}${teamBadge(fixture.team2, { compact: true })}</div>
-        <small>${fixture.result ? `${resultLabel(fixture, fixture.result)} won` : escapeHtml(fixture.status || "Score updated")}</small>
+        <strong>${icon(stat.icon)} ${escapeHtml(stat.title)}</strong>
+        <small>${stat.team ? teamBadge(stat.team, { compact: true }) : escapeHtml(stat.detail)}</small>
       </div>
-      <strong>${scoreText(fixture)}</strong>
+      <strong>${escapeHtml(stat.value)}</strong>
     </div>
-  `).join("") : `<div class="empty-state">No scored matches yet.</div>`;
+  `).join("") : `<div class="empty-state">Tournament stats will appear after scores sync.</div>`;
+  window.lucide?.createIcons();
 }
 
 function renderMatchBoard() {
@@ -567,7 +719,7 @@ function renderMatchBoard() {
       <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
       ${matchMetaChips(fixture)}
       <div class="match-card-teams">${teamBadge(fixture.team1)}<span class="versus">vs</span>${teamBadge(fixture.team2)}</div>
-      <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${hasScore(fixture) ? scoreText(fixture) : fixture.result ? resultLabel(fixture, fixture.result) : scoreValue(settlement(fixture).pool)}</strong></div>
+      <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${hasScore(fixture) ? scoreWithPenaltyText(fixture) : fixture.result ? resultLabel(fixture, fixture.result) : scoreValue(settlement(fixture).pool)}</strong></div>
     </article>
   `).join("");
 }
@@ -592,9 +744,9 @@ function renderLiveScores() {
     <article class="live-score-card">
       <div class="match-card-meta"><span>#${fixture.id}</span>${statusBadge(matches.length && !isFinalFixture(fixture) ? fixture.status || "Live" : fixture.status || "Final")}</div>
       ${matchMetaChips(fixture)}
-      <div class="score-line">${teamBadge(fixture.team1)}<strong>${fixture.team1Score ?? "-"}</strong></div>
-      <div class="score-line">${teamBadge(fixture.team2)}<strong>${fixture.team2Score ?? "-"}</strong></div>
-      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(displayStatusLabel(fixture.status || "In progress"))}</strong></div>
+      <div class="score-line">${teamBadge(fixture.team1)}<strong>${displayTeamScore(fixture, 1)}</strong></div>
+      <div class="score-line">${teamBadge(fixture.team2)}<strong>${displayTeamScore(fixture, 2)}</strong></div>
+      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}${penaltyText(fixture) ? ` · ${escapeHtml(penaltyText(fixture))}` : ""}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(displayStatusLabel(fixture.status || "In progress"))}</strong></div>
     </article>
   `).join("") : `<div class="empty-state">No synced scores yet.</div>`;
   elements.liveTicker.innerHTML = rows.length ? `
@@ -602,7 +754,7 @@ function renderLiveScores() {
       ${[...rows, ...rows].map((fixture) => `
         <span class="ticker-item">
           <strong>#${fixture.id}</strong>
-          ${escapeHtml(fixture.team1)} ${fixture.team1Score ?? "-"} — ${fixture.team2Score ?? "-"} ${escapeHtml(fixture.team2)}
+          ${escapeHtml(fixture.team1)} ${scoreWithPenaltyText(fixture)} ${escapeHtml(fixture.team2)}
           <em>${escapeHtml(fixtureStatusLabel(fixture))}</em>
         </span>
       `).join("")}
@@ -669,7 +821,7 @@ function renderFixtures() {
         <td><strong>#${fixture.id}</strong><div class="fixture-subtext">${escapeHtml(fixture.stage || "")}${fixture.group ? ` / Group ${escapeHtml(fixture.group)}` : ""}</div></td>
         <td><strong>${dateLabel(fixture.date)}</strong><div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div></td>
         <td><div class="team-line">${teamBadge(fixture.team1)}</div><div class="team-line">${teamBadge(fixture.team2)}</div><div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div></td>
-        <td><strong>${fixture.team1Score ?? "-"} - ${fixture.team2Score ?? "-"}</strong></td>
+        <td class="fixture-score-cell">${scoreDisplay(fixture, { short: true })}</td>
         <td>${escapeHtml(resultText)}</td>
         <td>${statusBadge(betStatus)}</td>
         <td>
@@ -1116,11 +1268,12 @@ function renderAllFixtures() {
       </div>
       <div class="fixture-card-body">
         <div>
-          <div class="score-line">${teamBadge(fixture.team1)}<strong>${fixture.team1Score ?? "-"}</strong></div>
-          <div class="score-line">${teamBadge(fixture.team2)}<strong>${fixture.team2Score ?? "-"}</strong></div>
+          <div class="score-line">${teamBadge(fixture.team1)}<strong>${displayTeamScore(fixture, 1)}</strong></div>
+          <div class="score-line">${teamBadge(fixture.team2)}<strong>${displayTeamScore(fixture, 2)}</strong></div>
         </div>
         <div class="fixture-status">
           <strong>${fixture.result ? resultLabel(fixture, fixture.result) : hasScore(fixture) ? escapeHtml(fixture.status || "Score updated") : "Not started"}</strong>
+          ${penaltyText(fixture) ? `<em>${escapeHtml(penaltyText(fixture))}</em>` : ""}
           <span>${escapeHtml(fixture.venue || "")}</span>
         </div>
       </div>
@@ -1269,13 +1422,17 @@ function resolveGroupSeed(seed, projection, assignedThirdGroups = new Set()) {
   }
   const bestThird = value.match(/^Best 3rd \(([^)]+)\)$/i);
   if (bestThird) {
-    if (!projection.allGroupsComplete) return value;
     const candidateGroups = bestThird[1].split("/").map((group) => group.trim().toUpperCase());
     const candidate = projection.thirdRankings.find((row) =>
-      row.qualified && candidateGroups.includes(row.group) && !assignedThirdGroups.has(row.group)
+      row.groupComplete
+        && candidateGroups.includes(row.group)
+        && (
+          !projection.allGroupsComplete
+          || (row.qualified && !assignedThirdGroups.has(row.group))
+        )
     );
     if (candidate) {
-      assignedThirdGroups.add(candidate.group);
+      if (projection.allGroupsComplete) assignedThirdGroups.add(candidate.group);
       return candidate.team;
     }
   }
@@ -1372,7 +1529,7 @@ function renderRoadmap() {
     projectedTeam2: resolvedKnockoutTeam(fixture.team2, fixturesById, projection, assignedThirdGroups),
   });
   const rounds = {
-    left32: [74, 77, 73, 75, 83, 84, 81, 82].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    left32: [74, 78, 73, 75, 83, 84, 81, 82].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
     left16: [89, 90, 93, 94].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
     leftQf: [97, 98].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
     leftSf: [101].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
@@ -1381,30 +1538,97 @@ function renderRoadmap() {
     rightSf: [102].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
     rightQf: [99, 100].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
     right16: [91, 92, 95, 96].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
-    right32: [76, 78, 79, 80, 86, 88, 85, 87].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+    right32: [76, 77, 79, 80, 86, 88, 85, 87].map((id) => fixturesById.get(id)).filter(Boolean).map(resolvedFixture),
+  };
+  const bracketStatusText = (fixture) => {
+    if (fixture.result) return `${resultLabel(fixture, fixture.result)} advances`;
+    if (hasScore(fixture)) return displayStatusLabel(fixture.status || "Live");
+    return "Upcoming";
   };
   const bracketMatch = (fixture, options = {}) => `
     <article class="bracket-match ${fixture.result ? "is-final" : ""} ${options.center ? "is-championship" : ""}">
+      ${options.center ? `<img class="bracket-trophy" src="assets/world-cup-2026-logo.png" alt="World Cup trophy">` : ""}
       <div class="match-card-meta"><span>${options.center ? escapeHtml(fixture.stage || "Final") : `#${fixture.id}`}</span><span>${dateLabel(fixture.date)}${fixture.kickoff ? ` · ${escapeHtml(fixture.kickoff)}` : ""}</span></div>
       <div class="bracket-teams">
-        <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam1), { compact: true })}<strong>${fixture.team1Score ?? ""}</strong></div>
-        <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam2), { compact: true })}<strong>${fixture.team2Score ?? ""}</strong></div>
+        <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam1), { compact: true })}${bracketTeamScore(fixture, 1)}</div>
+        <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam2), { compact: true })}${bracketTeamScore(fixture, 2)}</div>
       </div>
       <div class="bracket-match-footer">
         <span>${escapeHtml(fixture.kickoff || "")}</span>
-        <strong>${fixture.result ? `${escapeHtml(resultLabel(fixture, fixture.result))} advances` : hasScore(fixture) ? escapeHtml(fixture.status || "In progress") : "Pending"}</strong>
+        <strong>${escapeHtml(bracketStatusText(fixture))}</strong>
       </div>
       <div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div>
     </article>
   `;
   const slotMaps = {
-    round32: [1, 3, 5, 7, 10, 12, 14, 16],
-    round16: [2, 6, 11, 15],
-    quarter: [4, 13],
-    semi: [8],
-    final: [7],
-    third: [10],
+    round32: [1, 4, 7, 10, 14, 17, 20, 23],
+    round16: [2, 8, 15, 21],
+    quarter: [5, 18],
+    semi: [12],
+    final: [10],
+    third: [15],
   };
+  const bracketLayout = {
+    rowHeight: 54,
+    slotSpan: 3,
+    titleOffset: 68,
+    columnGap: 58,
+    columnWidths: [200, 200, 200, 200, 260, 200, 200, 200, 200],
+  };
+  const roundDefinitions = [
+    { key: "left32", column: 0, ids: [74, 78, 73, 75, 83, 84, 81, 82], slots: slotMaps.round32 },
+    { key: "left16", column: 1, ids: [89, 90, 93, 94], slots: slotMaps.round16 },
+    { key: "leftQf", column: 2, ids: [97, 98], slots: slotMaps.quarter },
+    { key: "leftSf", column: 3, ids: [101], slots: slotMaps.semi },
+    { key: "final", column: 4, ids: [104], slots: slotMaps.final },
+    { key: "third", column: 4, ids: [103], slots: slotMaps.third },
+    { key: "rightSf", column: 5, ids: [102], slots: slotMaps.semi },
+    { key: "rightQf", column: 6, ids: [99, 100], slots: slotMaps.quarter },
+    { key: "right16", column: 7, ids: [91, 92, 95, 96], slots: slotMaps.round16 },
+    { key: "right32", column: 8, ids: [76, 77, 79, 80, 86, 88, 85, 87], slots: slotMaps.round32 },
+  ];
+  const columnLefts = bracketLayout.columnWidths.reduce((lefts, width, index) => {
+    lefts.push(index === 0 ? 0 : lefts[index - 1] + bracketLayout.columnWidths[index - 1] + bracketLayout.columnGap);
+    return lefts;
+  }, []);
+  const bracketWidth = bracketLayout.columnWidths.reduce((sum, width) => sum + width, 0) + bracketLayout.columnGap * (bracketLayout.columnWidths.length - 1);
+  const bracketHeight = bracketLayout.titleOffset + 26 * bracketLayout.rowHeight;
+  const positionById = new Map();
+  roundDefinitions.forEach((round) => {
+    round.ids.forEach((id, index) => {
+      const slot = round.slots[index];
+      const x = columnLefts[round.column];
+      const y = bracketLayout.titleOffset + ((slot - 1) * bracketLayout.rowHeight) + (bracketLayout.slotSpan * bracketLayout.rowHeight / 2);
+      positionById.set(id, {
+        x,
+        y,
+        left: x,
+        right: x + bracketLayout.columnWidths[round.column],
+      });
+    });
+  });
+  const connectorPairs = [
+    [74, 89], [78, 89], [73, 90], [75, 90], [83, 93], [84, 93], [81, 94], [82, 94],
+    [89, 97], [90, 97], [93, 98], [94, 98], [97, 101], [98, 101], [101, 104],
+    [76, 91], [77, 91], [79, 92], [80, 92], [86, 95], [88, 95], [85, 96], [87, 96],
+    [91, 99], [92, 99], [95, 100], [96, 100], [99, 102], [100, 102], [102, 104],
+    [101, 103], [102, 103],
+  ];
+  const connectorPath = ([fromId, toId]) => {
+    const from = positionById.get(fromId);
+    const to = positionById.get(toId);
+    if (!from || !to) return "";
+    const isLeftToRight = from.x < to.x;
+    const startX = isLeftToRight ? from.right : from.left;
+    const endX = isLeftToRight ? to.left : to.right;
+    const midX = startX + ((endX - startX) / 2);
+    return `<path d="M ${startX} ${from.y} H ${midX} V ${to.y} H ${endX}" />`;
+  };
+  const bracketLines = `
+    <svg class="bracket-lines" viewBox="0 0 ${bracketWidth} ${bracketHeight}" preserveAspectRatio="none" aria-hidden="true">
+      ${connectorPairs.map(connectorPath).join("")}
+    </svg>
+  `;
   const bracketRound = (title, fixtures, side = "", slots = []) => `
     <section class="bracket-round ${side}">
       <div class="bracket-round-title">
@@ -1423,6 +1647,7 @@ function renderRoadmap() {
   elements.roadmap.innerHTML = `
     <div class="roadmap-zoom-surface">
       <section class="centered-bracket">
+        ${bracketLines}
         ${bracketRound("Round of 32", rounds.left32, "is-left", slotMaps.round32)}
         ${bracketRound("Round of 16", rounds.left16, "is-left", slotMaps.round16)}
         ${bracketRound("Quarterfinal", rounds.leftQf, "is-left", slotMaps.quarter)}

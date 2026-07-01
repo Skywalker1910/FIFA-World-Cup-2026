@@ -639,6 +639,8 @@ function renderAdmin() {
       <input data-field="team2" value="${escapeHtml(fixture.team2 || "")}" placeholder="Team 2">
       <input data-field="team1Score" type="number" min="0" value="${fixture.team1Score ?? ""}" placeholder="T1 score">
       <input data-field="team2Score" type="number" min="0" value="${fixture.team2Score ?? ""}" placeholder="T2 score">
+      <input data-field="team1PenaltyScore" type="number" min="0" value="${fixture.team1PenaltyScore ?? ""}" placeholder="T1 pens">
+      <input data-field="team2PenaltyScore" type="number" min="0" value="${fixture.team2PenaltyScore ?? ""}" placeholder="T2 pens">
       <select data-field="result">${optionList(fixture.result)}</select>
       <select data-field="matchStatus">${statusList(fixture.status)}</select>
       <input data-field="notes" value="${escapeHtml(fixture.notes || "")}" placeholder="Notes">
