@@ -211,6 +211,38 @@ function dateLabel(value) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${value}T12:00:00`));
 }
 
+function serverTimeZone() {
+  return activeServer() === "India" ? "Asia/Kolkata" : "America/New_York";
+}
+
+function serverTimeSuffix() {
+  return activeServer() === "India" ? "IST" : "ET";
+}
+
+function fixtureDateLabel(fixture) {
+  if (!fixture?.kickoffAt) return dateLabel(fixture?.date);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: serverTimeZone(),
+  }).format(new Date(fixture.kickoffAt));
+}
+
+function fixtureTimeLabel(fixture) {
+  if (!fixture?.kickoffAt) return fixture?.kickoff || "TBD";
+  return `${new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: serverTimeZone(),
+  }).format(new Date(fixture.kickoffAt))} ${serverTimeSuffix()}`;
+}
+
+function fixtureDateTimeLabel(fixture) {
+  return `${fixtureDateLabel(fixture)} ${fixtureTimeLabel(fixture)}`;
+}
+
 function initials(team) {
   return String(team || "?").replace(/[()]/g, "").split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?";
 }
@@ -711,12 +743,12 @@ function renderRecentSettlements() {
 }
 
 function renderMatchBoard() {
-  const open = app.state.fixtures.filter((fixture) => !fixture.result).slice(0, 6);
-  const matches = open.length ? open : app.state.fixtures.filter((fixture) => fixture.result).slice(-6).reverse();
+  const open = sortByKickoffAsc(app.state.fixtures.filter((fixture) => !fixture.result)).slice(0, 6);
+  const matches = open.length ? open : latestChronological(app.state.fixtures.filter((fixture) => fixture.result), 6);
   elements.matchBoardLabel.textContent = open.length ? "Next open matches" : "Latest results";
   elements.matchBoard.innerHTML = matches.map((fixture) => `
     <article class="match-card">
-      <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
+      <div class="match-card-meta"><span>#${fixture.id}</span><span>${fixtureDateLabel(fixture)}</span></div>
       ${matchMetaChips(fixture)}
       <div class="match-card-teams">${teamBadge(fixture.team1)}<span class="versus">vs</span>${teamBadge(fixture.team2)}</div>
       <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${hasScore(fixture) ? scoreWithPenaltyText(fixture) : fixture.result ? resultLabel(fixture, fixture.result) : scoreValue(settlement(fixture).pool)}</strong></div>
@@ -728,6 +760,28 @@ function matchStartTime(fixture) {
   return fixture.kickoffAt ? new Date(fixture.kickoffAt).getTime() : Number.POSITIVE_INFINITY;
 }
 
+function sortByKickoffDesc(fixtures) {
+  return [...fixtures].sort((left, right) => {
+    const rightTime = matchStartTime(right);
+    const leftTime = matchStartTime(left);
+    if (rightTime !== leftTime) return rightTime - leftTime;
+    return Number(right.id) - Number(left.id);
+  });
+}
+
+function sortByKickoffAsc(fixtures) {
+  return [...fixtures].sort((left, right) => {
+    const leftTime = matchStartTime(left);
+    const rightTime = matchStartTime(right);
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return Number(left.id) - Number(right.id);
+  });
+}
+
+function latestChronological(fixtures, limit = 6) {
+  return sortByKickoffAsc(sortByKickoffDesc(fixtures).slice(0, limit));
+}
+
 function renderLiveScores() {
   const now = Date.now();
   const liveWindow = 2.5 * 60 * 60 * 1000;
@@ -736,8 +790,9 @@ function renderLiveScores() {
       const start = matchStartTime(fixture);
       return hasScore(fixture) && Number.isFinite(start) && start <= now && now <= start + liveWindow;
     })
+    .sort((left, right) => matchStartTime(left) - matchStartTime(right))
     .slice(0, 6);
-  const fallback = app.state.fixtures.filter((fixture) => fixture.result || hasScore(fixture)).slice(-6).reverse();
+  const fallback = latestChronological(app.state.fixtures.filter((fixture) => fixture.result || hasScore(fixture)), 6);
   const rows = matches.length ? matches : fallback;
   elements.liveScoresLabel.textContent = matches.length ? "Ongoing now" : "Latest scores";
   elements.liveScores.innerHTML = rows.length ? rows.map((fixture) => `
@@ -746,7 +801,7 @@ function renderLiveScores() {
       ${matchMetaChips(fixture)}
       <div class="score-line">${teamBadge(fixture.team1)}<strong>${displayTeamScore(fixture, 1)}</strong></div>
       <div class="score-line">${teamBadge(fixture.team2)}<strong>${displayTeamScore(fixture, 2)}</strong></div>
-      <div class="match-card-footer"><span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}${penaltyText(fixture) ? ` · ${escapeHtml(penaltyText(fixture))}` : ""}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(displayStatusLabel(fixture.status || "In progress"))}</strong></div>
+      <div class="match-card-footer"><span>${escapeHtml(fixtureDateTimeLabel(fixture))}${penaltyText(fixture) ? ` · ${escapeHtml(penaltyText(fixture))}` : ""}</span><strong>${fixture.result ? resultLabel(fixture, fixture.result) : escapeHtml(displayStatusLabel(fixture.status || "In progress"))}</strong></div>
     </article>
   `).join("") : `<div class="empty-state">No synced scores yet.</div>`;
   elements.liveTicker.innerHTML = rows.length ? `
@@ -771,10 +826,10 @@ function renderUpcomingMatches() {
   elements.upcomingLabel.textContent = `${rows.length} next`;
   elements.upcomingMatches.innerHTML = rows.length ? rows.map((fixture) => `
     <article class="match-card">
-      <div class="match-card-meta"><span>#${fixture.id}</span><span>${dateLabel(fixture.date)}</span></div>
+      <div class="match-card-meta"><span>#${fixture.id}</span><span>${fixtureDateLabel(fixture)}</span></div>
       ${matchMetaChips(fixture)}
       <div class="match-card-teams">${teamBadge(fixture.team1)}<span class="versus">vs</span>${teamBadge(fixture.team2)}</div>
-      <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${escapeHtml(fixture.kickoff || "TBD")}</strong></div>
+      <div class="match-card-footer"><span>${icon("map-pin")} ${escapeHtml(fixture.venue || "Venue TBD")}</span><strong>${escapeHtml(fixtureTimeLabel(fixture))}</strong></div>
     </article>
   `).join("") : `<div class="empty-state">No upcoming open matches.</div>`;
 }
@@ -819,7 +874,7 @@ function renderFixtures() {
     return `
       <tr data-id="${fixture.id}">
         <td><strong>#${fixture.id}</strong><div class="fixture-subtext">${escapeHtml(fixture.stage || "")}${fixture.group ? ` / Group ${escapeHtml(fixture.group)}` : ""}</div></td>
-        <td><strong>${dateLabel(fixture.date)}</strong><div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div></td>
+        <td><strong>${fixtureDateLabel(fixture)}</strong><div class="fixture-subtext">${escapeHtml(fixtureTimeLabel(fixture))}</div></td>
         <td><div class="team-line">${teamBadge(fixture.team1)}</div><div class="team-line">${teamBadge(fixture.team2)}</div><div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div></td>
         <td class="fixture-score-cell">${scoreDisplay(fixture, { short: true })}</td>
         <td>${escapeHtml(resultText)}</td>
@@ -1018,8 +1073,8 @@ function renderPublicBets() {
           <div class="fixture-subtext">${escapeHtml(fixture.stage || "")} ${escapeHtml(fixture.group || "")}</div>
         </td>
         <td>
-          <strong>${dateLabel(fixture.date)}</strong>
-          <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div>
+          <strong>${fixtureDateLabel(fixture)}</strong>
+          <div class="fixture-subtext">${escapeHtml(fixtureTimeLabel(fixture))}</div>
         </td>
         ${players.map((player) => {
           const bet = fixture.bets[player.id] || null;
@@ -1117,8 +1172,8 @@ function renderAIPredictionMatrix(agents, predictions) {
           <div class="ai-table-matchup">${teamBadge(fixture.team1, { compact: true })}<span>vs</span>${teamBadge(fixture.team2, { compact: true })}</div>
         </td>
         <td>
-          <strong>${dateLabel(fixture.date)}</strong>
-          <div class="fixture-subtext">${escapeHtml(fixture.kickoff || "")}</div>
+          <strong>${fixtureDateLabel(fixture)}</strong>
+          <div class="fixture-subtext">${escapeHtml(fixtureTimeLabel(fixture))}</div>
         </td>
         ${agents.map((agent) => {
           const prediction = matchPredictions.find((item) => Number(item.userId) === Number(agent.id)) || null;
@@ -1225,7 +1280,7 @@ function renderAI() {
         <div class="ai-prediction-match">
           <span>#${prediction.matchId} · ${escapeHtml(fixture.stage || "")}${fixture.group ? ` · Group ${escapeHtml(fixture.group)}` : ""}</span>
           <div>${teamBadge(fixture.team1, { compact: true })}<b>vs</b>${teamBadge(fixture.team2, { compact: true })}</div>
-          <small>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</small>
+          <small>${escapeHtml(fixtureDateTimeLabel(fixture))}</small>
         </div>
         <div class="ai-prediction-pick">
           <span>Predicted winner</span>
@@ -1264,7 +1319,7 @@ function renderAllFixtures() {
     <article class="tournament-fixture-card ${fixture.result ? "is-final" : ""}">
       <div class="match-card-meta">
         <span>#${fixture.id} ${escapeHtml(fixture.stage || "")}${fixture.group ? ` / Group ${escapeHtml(fixture.group)}` : ""}</span>
-        <span>${dateLabel(fixture.date)} ${escapeHtml(fixture.kickoff || "")}</span>
+        <span>${escapeHtml(fixtureDateTimeLabel(fixture))}</span>
       </div>
       <div class="fixture-card-body">
         <div>
@@ -1548,13 +1603,13 @@ function renderRoadmap() {
   const bracketMatch = (fixture, options = {}) => `
     <article class="bracket-match ${fixture.result ? "is-final" : ""} ${options.center ? "is-championship" : ""}">
       ${options.center ? `<img class="bracket-trophy" src="assets/world-cup-2026-logo.png" alt="World Cup trophy">` : ""}
-      <div class="match-card-meta"><span>${options.center ? escapeHtml(fixture.stage || "Final") : `#${fixture.id}`}</span><span>${dateLabel(fixture.date)}${fixture.kickoff ? ` · ${escapeHtml(fixture.kickoff)}` : ""}</span></div>
+      <div class="match-card-meta"><span>${options.center ? escapeHtml(fixture.stage || "Final") : `#${fixture.id}`}</span><span>${escapeHtml(fixtureDateTimeLabel(fixture))}</span></div>
       <div class="bracket-teams">
         <div class="${resolvedResult(fixture) === "Team 1" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam1), { compact: true })}${bracketTeamScore(fixture, 1)}</div>
         <div class="${resolvedResult(fixture) === "Team 2" ? "winner-team" : ""}">${teamBadge(displayTeamName(fixture.projectedTeam2), { compact: true })}${bracketTeamScore(fixture, 2)}</div>
       </div>
       <div class="bracket-match-footer">
-        <span>${escapeHtml(fixture.kickoff || "")}</span>
+        <span>${escapeHtml(fixtureTimeLabel(fixture))}</span>
         <strong>${escapeHtml(bracketStatusText(fixture))}</strong>
       </div>
       <div class="fixture-subtext">${escapeHtml(fixture.venue || "")}</div>
